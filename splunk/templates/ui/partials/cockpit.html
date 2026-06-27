@@ -1,0 +1,83 @@
+{% if active and active.run_id %}
+<div class="cockpit-strip" id="cockpit-strip-{{ active.run_id }}">
+  <div class="cockpit-left">
+    <span class="cockpit-label">INVESTIGATING</span>
+    <span class="cockpit-task-id">{{ active.run_id[:8] }}</span>
+    <span class="cockpit-sep">·</span>
+    <span class="cockpit-meta">iter <span id="sse-iter">{{ active.iteration }}</span></span>
+    <span class="cockpit-sep">·</span>
+    <span class="conf-badge {{ active.confidence }}" id="sse-conf">{{ active.confidence }}</span>
+    <span class="cockpit-sep">·</span>
+    <span class="cockpit-meta" id="sse-events">{{ active.events or '—' }} events</span>
+    <span class="cockpit-sep">·</span>
+    {% if active.pause_requested %}
+    <span style="color:#fbbf24;font-size:11px;font-weight:700;">PAUSED</span>
+    {% else %}
+    <span class="spinner" id="sse-spinner">⟳</span>
+    {% endif %}
+  </div>
+  <div class="cockpit-title">{{ active.source }}</div>
+  <div class="cockpit-actions">
+    <input id="hint-input" class="task-search" style="width:160px;font-size:12px;padding:3px 8px;"
+           placeholder="inject hint…" type="text">
+    <button class="cockpit-btn" style="background:#1a2f4a;color:#60a5fa;"
+            onclick="sendHint()">Hint</button>
+    {% if active.pause_requested %}
+    <button class="cockpit-btn" style="background:#1a3a1a;color:#4caf50;"
+            hx-post="/api/investigate/resume" hx-swap="none"
+            hx-on::after-request="htmx.trigger('#cockpit-wrap','load')">Resume</button>
+    {% else %}
+    <button class="cockpit-btn" style="background:#3a2200;color:#fbbf24;"
+            hx-post="/api/investigate/pause" hx-swap="none"
+            hx-on::after-request="htmx.trigger('#cockpit-wrap','load')">Pause</button>
+    {% endif %}
+    <button class="cockpit-btn cockpit-btn-detail"
+            onclick="htmx.ajax('GET','/ui/runs/{{ active.run_id }}',{target:'#detail-panel',swap:'innerHTML'})">View</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  const runId = "{{ active.run_id }}";
+
+  function sendHint() {
+    const val = document.getElementById('hint-input').value.trim();
+    if (!val) return;
+    fetch('/api/investigate/hint', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({hint: val}),
+    }).then(() => { document.getElementById('hint-input').value = ''; });
+  }
+  window.sendHint = sendHint;
+
+  // SSE — live iteration updates
+  if (window._splunkSSE) { window._splunkSSE.close(); }
+  const es = new EventSource('/ui/runs/' + runId + '/stream');
+  window._splunkSSE = es;
+
+  es.onmessage = function(e) {
+    const d = JSON.parse(e.data);
+    const iterEl  = document.getElementById('sse-iter');
+    const confEl  = document.getElementById('sse-conf');
+    const eventsEl = document.getElementById('sse-events');
+    if (iterEl && d.iteration !== undefined) iterEl.textContent = d.iteration;
+    if (confEl && d.confidence) {
+      confEl.textContent = d.confidence;
+      confEl.className = 'conf-badge ' + d.confidence;
+    }
+    if (eventsEl && d.events !== undefined) eventsEl.textContent = d.events + ' events';
+  };
+
+  es.addEventListener('done', function() {
+    es.close();
+    const spinner = document.getElementById('sse-spinner');
+    if (spinner) { spinner.textContent = '✓'; spinner.style.animation = 'none'; spinner.style.color = '#4caf50'; }
+    // Reload cockpit via HTMX after a moment so it clears
+    setTimeout(() => htmx.trigger('#cockpit-wrap', 'load'), 2000);
+  });
+
+  es.onerror = function() { es.close(); };
+})();
+</script>
+{% endif %}

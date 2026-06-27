@@ -1,24 +1,18 @@
 ---
 name: splunk-investigate
-description: Investigate a Splunk production issue. Runs the local splunk_analysis pipeline to extract structured findings, then reasons over them to identify root cause, confidence, and follow-up SPL queries. Iterates until High confidence or no new signal.
+description: Investigate a Splunk production issue. Loads events, runs deterministic detectors, then drives an iterative investigation loop via MCP tools — Claude is the reasoning engine. No Ollama, no API key. Results live in the UI at http://127.0.0.1:8765/ui/
 user-invocable: true
 cwd: /Users/debaditya/workspace/splunk_analysis
 ---
 
 # Splunk Investigate
 
-Runs the local `splunk_analysis` pipeline against a Splunk export or live query, reasons over structured findings, and produces an investigation report with follow-up SPL queries.
+Claude-session investigation loop via MCP tools. The PostToolUse hook in claude-hooks automatically injects next findings into the system prompt after each `splunk__submit_report` call — Claude loops without any manual intervention.
 
 ## Repo
 
-`/Users/debaditya/workspace/splunk_analysis` — Python 3.12, `uv`, Polars parsers + detectors, SQLite store. Run all commands with `uv run` from that directory.
-
-## How It Works
-
-1. **Get findings** — run the pipeline in `--dump-findings` mode (no LLM, no Ollama needed). Output is a structured JSON dict from deterministic Polars detectors.
-2. **Reason** — Claude analyses the findings inline: root cause hypothesis, confidence level (High / Medium / Low), affected hosts, timeline.
-3. **Generate follow-up queries** — Claude produces concrete SPL queries using only field names and values present in the findings (no hallucination).
-4. **Iterate** — if confidence is not High and the user wants to go deeper, run the follow-up queries (via `--live` or manually in Splunk), feed new findings back, repeat.
+`/Users/debaditya/workspace/splunk_analysis`  
+Server (optional but recommended for UI): `./serve.sh` → `http://127.0.0.1:8765/ui/`
 
 ## Invocation
 
@@ -27,34 +21,46 @@ Runs the local `splunk_analysis` pipeline against a Splunk export or live query,
 ```
 
 `<input>` is one of:
-- A file path: `results/cert_errors.json`, `results/ocsp.csv`
-- A live SPL query: `"index=pki sourcetype=ocsp_error" --earliest -6h`
-- Nothing — Claude will ask
+- File path: `results/cert_errors.json`, `results/ocsp.csv`
+- Live SPL: `"index=pki sourcetype=ocsp_error" --earliest -6h`
+- Nothing — ask the user
 
-## Step-by-Step
+---
 
-### Step 1 — Get findings
+## Loop — how it works (MCP path, primary)
 
-If input is a file:
-```bash
-cd /Users/debaditya/workspace/splunk_analysis && uv run python -m splunk --input <file> --dump-findings
+```
+splunk__investigate_start(source)   →  {run_id, findings}
+Claude reasons                      →  report + SPL queries
+splunk__submit_report(run_id, ...)  →  PostToolUse hook injects next findings automatically
+Claude reasons again                →  ...
+until: confidence=High | no new events | max 3 iterations
 ```
 
-If input is a live SPL query:
-```bash
-cd /Users/debaditya/workspace/splunk_analysis && uv run python -m splunk --live --spl "<query>" --earliest <window> --dump-findings
+The PostToolUse hook in claude-hooks fires after every `splunk__submit_report` call. It extracts the next findings from the tool result and injects them into `additionalSystemPrompt` — Claude sees them on the next turn and continues automatically.
+
+---
+
+## Step 1 — Start the investigation
+
+```python
+splunk__investigate_start(source="results/cert_errors.json")
+# OR for live query:
+splunk__investigate_start(spl="index=pki sourcetype=ocsp_error", earliest="-6h")
 ```
 
-Capture the JSON output. This is the findings dict — it contains:
-- `spikes` — frequency spikes with timestamps and affected hosts
-- `patterns` — repeating error codes per sourcetype
-- `cert_anomalies` — events matching cert/OCSP/CRL keywords
-- `correlations` — events clustered within 60s windows
-- `severity` — count breakdown by severity level
-- `host_ranking` — hosts ranked by error count
-- `event_count` — total events parsed
+Returns `{run_id, findings, event_count, ui_url}`. Note the `run_id`.
 
-### Step 2 — Reason over findings
+Fallback (if MCP server not running):
+```bash
+curl -s -X POST http://127.0.0.1:8765/api/investigate/start \
+  -H "Content-Type: application/json" \
+  -d '{"source": "<file_path>"}'
+```
+
+---
+
+## Step 2 — Reason over findings
 
 Analyse the findings dict and produce a structured report:
 
@@ -68,10 +74,10 @@ Analyse the findings dict and produce a structured report:
 **Confidence:** High | Medium | Low
 
 ## Affected Hosts
-<comma-separated list from findings>
+<from findings.host_ranking>
 
 ## Timeline
-<first occurrence → escalation → current state>
+<from findings.spikes — first spike timestamp → now>
 
 ## Recommended Next Steps
 - <action 1>
@@ -80,60 +86,78 @@ Analyse the findings dict and produce a structured report:
 ```
 
 Rules:
-- Only reference hosts, error codes, timestamps, and sourcetypes that appear in the findings JSON — never invent values
-- Assign confidence based on signal strength: High = consistent pattern across multiple detectors, Medium = partial signal, Low = sparse data
-- If `event_count` < 50, note that the sample is small and confidence should be capped at Medium
+- Only reference hosts, error codes, timestamps, sourcetypes present in findings — never invent values
+- High = consistent signal across multiple detectors; Medium = partial; Low = sparse data
+- If `event_count` < 50 — cap confidence at Medium
 
-### Step 3 — Generate follow-up SPL queries
+---
 
-After the report, produce concrete SPL queries the analyst can run next. Use only index names, sourcetypes, hosts, and error codes from the findings. Default index is `pki` unless the findings suggest otherwise.
+## Step 3 — Generate follow-up SPL queries
 
-Template areas to cover based on what the findings show:
-- **host_isolation** — if errors are concentrated on specific hosts
-- **timeline** — if a spike was detected, get per-minute breakdown
-- **first_occurrence** — pin the exact first event
-- **ocsp** — if cert_anomalies mention ocsp keywords, check network traffic to OCSP responders
-- **crl** — if crl keywords appear, check CRL distribution point reachability
+Produce concrete SPL using only fields/values from findings. Default index: `pki`.
 
-Format each query as a code block with a comment header:
+Format each as a string with `-- area` comment prefix:
 ```
 -- host_isolation
-index=pki host IN ("host1", "host2") earliest=2024-01-15T10:00:00 latest=+2h
+index=pki host IN ("web-01") earliest=2024-01-15T14:32:00 latest=+2h
 | stats count by host, sourcetype, error_code | sort -count
 ```
 
-### Step 4 — Iterate (if needed)
+Areas to cover based on findings:
+- `host_isolation` — errors concentrated on specific hosts
+- `timeline` — spike detected, get per-minute breakdown
+- `first_occurrence` — pin exact first event
+- `ocsp` — cert_anomalies contain ocsp keywords
+- `crl` — crl keywords in cert_anomalies
 
-If confidence is not High:
-- Ask the user: "Want me to run these queries and go deeper?"
-- If yes and `--live` is available: run each query via `uv run python -m splunk --live --spl "<query>" --dump-findings`, collect new findings, merge with prior findings context, repeat from Step 2
-- If not live: present queries for the analyst to run manually in Splunk, ask them to paste results back
+---
 
-Stop iterating when:
-- Confidence reaches High
-- Follow-up queries return no new signal
-- 3 iterations reached
+## Step 4 — Submit report
+
+```python
+splunk__submit_report(
+    run_id="<run_id>",
+    report="<markdown report>",
+    queries=["-- host_isolation\nindex=pki ...", "-- timeline\nindex=pki ..."]
+)
+```
+
+**The PostToolUse hook automatically injects next findings into the system prompt.**  
+You will see them on the next turn — just continue reasoning and call `splunk__submit_report` again.
+
+Response is either:
+- `{status: "continue", findings: {...}}` → hook injects, Claude loops
+- `{status: "done", ui_url: "..."}` → investigation complete
+
+Fallback (if MCP server not running):
+```bash
+curl -s -X POST http://127.0.0.1:8765/api/investigate/report \
+  -H "Content-Type: application/json" \
+  -d '{"run_id": "<run_id>", "report": "...", "queries": ["..."]}'
+```
+
+---
+
+## Step 5 — Finish
+
+When `status: done` or confidence is High:
+- Present final summary to user
+- Link to UI: `http://127.0.0.1:8765/ui/runs/<run_id>`
+
+---
+
+## Pause / hint mid-loop
+
+```python
+splunk__pause(run_id="<run_id>")   # pause after current iteration
+splunk__hint(run_id="<run_id>", hint="focus on web-01 cert chain errors after 14:30 UTC")
+```
+
+---
 
 ## Key constraints
 
-- **Never hallucinate field names** — all SPL must use fields and values from the findings JSON
-- **No Ollama needed** — `--dump-findings` is pure Python/Polars, no LLM dependency
-- **No data leaves the machine** — this skill runs entirely locally; Claude reasons over the findings in this conversation only
-
-## Example
-
-```
-User: /splunk-investigate results/cert_errors.json
-
-Claude: [runs --dump-findings, gets findings JSON]
-        [reasons over it]
-        [produces report: root cause = OCSP responder unreachable, Confidence: Medium]
-        [produces 3 follow-up SPL queries]
-        "Want me to run these queries and go deeper?"
-
-User: yes
-
-Claude: [runs follow-up queries via --live]
-        [merges new findings]
-        [produces updated report: Confidence: High — OCSP responder at 10.0.0.5:2560 unreachable from hosts web-01, web-02 since 14:32 UTC]
-```
+- Never hallucinate field names — all SPL uses fields/values from findings JSON only
+- No Ollama, no Anthropic API key — Claude Code session is the reasoning engine
+- No data leaves the machine — findings stay local; Claude reasons in this conversation
+- MCP path is primary; curl/REST path is the fallback when the MCP server is not registered

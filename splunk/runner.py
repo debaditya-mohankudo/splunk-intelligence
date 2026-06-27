@@ -218,9 +218,34 @@ def main() -> None:
             return
 
         if args.investigate:
+            # Try delegating to the server if it's running
+            _server_accepted = False
+            try:
+                import requests as _req
+                payload = {"source": args.input} if not args.live else {"spl": args.spl, "earliest": args.earliest, "latest": args.latest}
+                resp = _req.post("http://127.0.0.1:8765/api/investigate", json=payload, timeout=3)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    print(f"Investigation started on server — run_id: {data['run_id']}")
+                    print("Watch at http://127.0.0.1:8765/ui/")
+                    _server_accepted = True
+            except Exception:
+                pass
+
+            if _server_accepted:
+                log.info("run.complete", run_id=run_id)
+                print(f"[log] logs/{run_id}.jsonl")
+                return
+
+            # Fall back — run directly
             from splunk.investigator import investigate
+            try:
+                from splunk.server import set_active_run
+                set_active_run(run_id, input_name)
+            except Exception:
+                pass
             log.info("investigator.start", source=input_name)
-            report, queries = investigate(df)
+            report, queries = investigate(df, run_id)
             if queries:
                 print(f"\n--- Follow-up queries ({len(queries)}) ---")
                 for q in queries:

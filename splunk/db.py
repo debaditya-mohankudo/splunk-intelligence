@@ -69,10 +69,22 @@ def init_db() -> None:
                 UNIQUE(sourcetype, field_name)
             );
 
+            CREATE TABLE IF NOT EXISTS investigation_queries (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id      TEXT NOT NULL,
+                iteration   INTEGER NOT NULL,
+                area        TEXT,
+                spl         TEXT NOT NULL,
+                executed    INTEGER NOT NULL DEFAULT 0,
+                result_rows INTEGER,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_events_run      ON events(run_id);
             CREATE INDEX IF NOT EXISTS idx_findings_run    ON findings(run_id);
             CREATE INDEX IF NOT EXISTS idx_reports_run     ON reports(run_id);
             CREATE INDEX IF NOT EXISTS idx_schema_stype    ON sourcetype_schema(sourcetype);
+            CREATE INDEX IF NOT EXISTS idx_iquery_run      ON investigation_queries(run_id);
         """)
 
 
@@ -167,6 +179,45 @@ def load_schema(sourcetype: str) -> dict[str, str] | None:
     schema = {r["field_name"]: r["dtype"] for r in rows}
     logger.debug("load_schema: loaded %d fields for sourcetype=%s", len(schema), sourcetype)
     return schema
+
+
+def store_queries(run_id: str, iteration: int, query_blocks: list[str], result_rows: list[int | None] | None = None) -> None:
+    """
+    Persist follow-up SPL queries for one investigation iteration.
+    query_blocks: list of strings in '-- area\\nSPL' format from generate_followup_queries tool.
+    result_rows: optional parallel list of row counts returned by each query (None = not yet executed).
+    """
+    import re
+    _comment_re = re.compile(r"^--\s*(\w+)\s*\n", re.MULTILINE)
+
+    rows = []
+    for i, block in enumerate(query_blocks):
+        block = block.strip()
+        m = _comment_re.match(block)
+        area = m.group(1) if m else ""
+        spl = _comment_re.sub("", block).strip()
+        executed = result_rows is not None
+        rrows = result_rows[i] if result_rows and i < len(result_rows) else None
+        rows.append((run_id, iteration, area, spl, int(executed), rrows))
+
+    with _connect() as conn:
+        conn.executemany(
+            "INSERT INTO investigation_queries (run_id, iteration, area, spl, executed, result_rows) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+    logger.info("store_queries: saved %d queries for run_id=%s iteration=%d", len(rows), run_id, iteration)
+
+
+def get_queries(run_id: str) -> list[dict]:
+    """Return all investigation queries for a run, ordered by iteration."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT iteration, area, spl, executed, result_rows, created_at "
+            "FROM investigation_queries WHERE run_id = ? ORDER BY iteration, id",
+            (run_id,),
+        ).fetchall()
+    return [dict(r) for r in rows]
 
 
 def query_events(run_id: str) -> pl.DataFrame:
