@@ -20,7 +20,7 @@ from typing_extensions import TypedDict
 
 from dotenv import load_dotenv
 
-from splunk.config import AGENT_MAX_ITER as MAX_ITERATIONS, LLM_MODEL as MODEL
+from splunk.config import AGENT_MAX_ITER as MAX_ITERATIONS, LLM_MODEL as MODEL, SPLUNK_INDEX
 
 load_dotenv()
 
@@ -48,6 +48,7 @@ class LogAnalysisState(TypedDict):
     messages: Annotated[list, add_messages]
     findings: dict[str, Any]
     report: str
+    followup_queries: list[str]
     iterations: int
 
 
@@ -163,7 +164,84 @@ def format_report(
 """
 
 
-TOOLS = [summarise_findings, rank_hypotheses, request_deeper_analysis, format_report]
+_SPL_TEMPLATES: dict[str, str] = {
+    "host_isolation": (
+        "index={index} host IN ({hosts}) earliest={spike_start} latest=+2h"
+        " | stats count by host, sourcetype, error_code | sort -count"
+    ),
+    "ocsp": (
+        "index=network dest_port=80 OR dest_port=2560 src IN ({hosts})"
+        " earliest={spike_start_minus5m} latest={spike_start_plus30m}"
+        " | timechart count by src"
+    ),
+    "crl": (
+        "index=network dest_port=80 src IN ({hosts})"
+        " earliest={spike_start} latest=+1h"
+        " | search url=*crl* OR url=*revocation*"
+        " | stats count by src, dest, url"
+    ),
+    "timeline": (
+        "index={index} sourcetype={sourcetype} ({error_filter})"
+        " | timechart span=1m count by host"
+    ),
+    "first_occurrence": (
+        "index={index} sourcetype={sourcetype} ({error_filter})"
+        " | sort _time | head 1 | table _time, host, sourcetype, message"
+    ),
+}
+
+
+@tool
+def generate_followup_queries(
+    hosts: str,
+    error_codes: str,
+    sourcetype: str,
+    spike_start: str,
+    areas: str,
+) -> str:
+    """
+    Generate follow-up SPL queries for the next investigation iteration.
+    hosts: comma-separated host names from findings
+    error_codes: comma-separated error codes from findings
+    sourcetype: primary sourcetype from findings
+    spike_start: ISO timestamp of the first spike
+    areas: comma-separated subset of: host_isolation, ocsp, crl, timeline, first_occurrence
+    """
+    from datetime import datetime, timedelta, timezone
+
+    host_list = ", ".join(f'"{h.strip()}"' for h in hosts.split(",") if h.strip())
+    error_filter = " OR ".join(f'error_code="{e.strip()}"' for e in error_codes.split(",") if e.strip()) or "*"
+
+    try:
+        t = datetime.fromisoformat(spike_start.replace("Z", "+00:00"))
+        spike_start_minus5m = (t - timedelta(minutes=5)).strftime("%Y-%m-%dT%H:%M:%S")
+        spike_start_plus30m = (t + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%S")
+    except (ValueError, AttributeError):
+        spike_start_minus5m = spike_start
+        spike_start_plus30m = spike_start
+
+    slots = {
+        "index": SPLUNK_INDEX,
+        "hosts": host_list,
+        "sourcetype": sourcetype.strip() or "*",
+        "error_filter": error_filter,
+        "spike_start": spike_start,
+        "spike_start_minus5m": spike_start_minus5m,
+        "spike_start_plus30m": spike_start_plus30m,
+    }
+
+    queries = []
+    for area in (a.strip() for a in areas.split(",") if a.strip()):
+        tmpl = _SPL_TEMPLATES.get(area)
+        if tmpl:
+            queries.append(f"-- {area}\n{tmpl.format(**slots)}")
+        else:
+            logger.warning("Unknown area '%s' requested in generate_followup_queries", area)
+
+    return "\n\n".join(queries) if queries else "No queries generated — check area names."
+
+
+TOOLS = [summarise_findings, rank_hypotheses, request_deeper_analysis, format_report, generate_followup_queries]
 
 
 # ---------------------------------------------------------------------------
@@ -208,13 +286,20 @@ def tool_node_fn(state: LogAnalysisState) -> dict:
     node = ToolNode(TOOLS)
     result = node.invoke(state)
     report = state.get("report", "")
+    followup_queries = state.get("followup_queries", [])
     for msg in result.get("messages", []):
-        if hasattr(msg, "name") and msg.name == "format_report" and msg.content:
+        if not hasattr(msg, "name"):
+            continue
+        if msg.name == "format_report" and msg.content:
             logger.info("format_report called — report captured (%d chars)", len(msg.content))
             report = msg.content
-        elif hasattr(msg, "name"):
+        elif msg.name == "generate_followup_queries" and msg.content:
+            new_queries = [q.strip() for q in msg.content.split("\n\n") if q.strip()]
+            followup_queries = followup_queries + new_queries
+            logger.info("generate_followup_queries called — %d queries captured", len(new_queries))
+        else:
             logger.debug("Tool executed: %s", msg.name)
-    return {**result, "report": report}
+    return {**result, "report": report, "followup_queries": followup_queries}
 
 
 def should_continue(state: LogAnalysisState) -> str:
@@ -259,10 +344,10 @@ def _get_graph() -> Any:
 # Public entry point
 # ---------------------------------------------------------------------------
 
-def analyse(findings: dict[str, Any]) -> str:
+def analyse(findings: dict[str, Any]) -> tuple[str, list[str]]:
     """
     Run the ReAct agent over structured findings from detectors.
-    Returns a markdown investigation report.
+    Returns (markdown report, list of follow-up SPL query strings).
     """
     logger.info(
         "Starting agent analysis — model=%s max_iter=%d event_count=%d",
@@ -278,20 +363,22 @@ def analyse(findings: dict[str, Any]) -> str:
         ],
         "findings": findings,
         "report": "",
+        "followup_queries": [],
         "iterations": 0,
     }
 
     final_state = graph.invoke(initial_state)
     total_iterations = final_state.get("iterations", 0)
+    queries = final_state.get("followup_queries", [])
 
     if final_state.get("report"):
         logger.info("Analysis complete — report from format_report (%d chars, %d iterations)", len(final_state["report"]), total_iterations)
-        return final_state["report"]
+        return final_state["report"], queries
 
     for msg in reversed(final_state["messages"]):
         if isinstance(msg, AIMessage) and msg.content:
             logger.warning("format_report not called — returning last AI message (%d iterations)", total_iterations)
-            return str(msg.content)
+            return str(msg.content), queries
 
     logger.error("Agent produced no output after %d iterations", total_iterations)
-    return "No report generated."
+    return "No report generated.", queries
