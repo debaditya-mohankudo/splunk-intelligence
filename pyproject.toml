@@ -1,0 +1,19 @@
+[project]
+name = "splunk-analysis"
+version = "0.1.0"
+description = "Local LLM Splunk intelligence — Python parsers + LangGraph ReAct + Qwen 32B"
+requires-python = ">=3.11"
+dependencies = [
+    "langchain-ollama",
+    "langchain-core",
+    "langgraph",
+    "playwright",
+    "requests",
+    "python-dotenv",
+    "polars",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+]
