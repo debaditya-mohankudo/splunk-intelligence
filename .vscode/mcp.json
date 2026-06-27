@@ -1,3 +1,10 @@
 {
-    "servers": {}
+    "servers": {
+        "splunk": {
+            "type": "stdio",
+            "command": "uv",
+            "cwd": "${workspaceFolder}",
+            "args": ["run", "python", "-m", "splunk.mcp_server"]
+        }
+    }
 }
