@@ -84,7 +84,7 @@ def run_pipeline(
 
     from splunk.agent import analyse
     from splunk.config import LLM_MODEL
-    report = analyse(findings)
+    report, _ = analyse(findings)
 
     # Detect whether format_report was called by checking for report header
     report_captured = report.startswith("# Splunk Investigation Report")
@@ -184,6 +184,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output", "-o", default="reports/", metavar="DIR", help="Output directory (default: reports/)")
     p.add_argument("--model", metavar="MODEL", help="Override Ollama model (default: qwen2.5:32b)")
     p.add_argument("--no-llm", action="store_true", help="Run parsers + detectors only, skip agent")
+    p.add_argument("--dump-findings", action="store_true", help="Print findings JSON to stdout (for pasting into Claude)")
+    p.add_argument("--investigate", action="store_true", help="Run iterative investigator loop (requires Splunk REST access for follow-up queries)")
     return p
 
 
@@ -209,20 +211,39 @@ def main() -> None:
             df = _load_from_file(args.input)
             input_name = args.input
 
-        # Pipeline
-        findings, report = run_pipeline(
-            df, log,
-            source=input_name,
-            no_llm=args.no_llm,
-            model=args.model,
-        )
+        if args.dump_findings:
+            findings, _ = run_pipeline(df, log, source=input_name, no_llm=True, model=args.model)
+            import json
+            print(json.dumps(findings, default=str, indent=2))
+            return
+
+        if args.investigate:
+            from splunk.investigator import investigate
+            log.info("investigator.start", source=input_name)
+            report, queries = investigate(df)
+            if queries:
+                print(f"\n--- Follow-up queries ({len(queries)}) ---")
+                for q in queries:
+                    print(q)
+                    print()
+        else:
+            # Pipeline
+            findings, report = run_pipeline(
+                df, log,
+                source=input_name,
+                no_llm=args.no_llm,
+                model=args.model,
+            )
 
         # Write report
         report_path = _write_report(report, args.output, input_name, log)
 
         log.info("run.complete", run_id=run_id)
 
-    _stdout_summary(findings, report_path)
+    if not args.investigate:
+        _stdout_summary(findings, report_path)
+    else:
+        print(f"report: {report_path}")
     print(f"[log] logs/{run_id}.jsonl")
 
 
