@@ -1,9 +1,9 @@
 """
 splunk__ MCP server — exposes the investigation pipeline as MCP tools.
 
-Claude calls these tools to drive the investigation loop. The FastAPI server
-session (_active_run, _sse_queues) is the persistence layer. PostToolUse hooks
-in claude-hooks inject next findings into additionalSystemPrompt automatically.
+The investigation loop is self-contained: splunk__submit_report returns
+{status, findings} in its JSON response. The calling agent reads status
+("continue" or "done") and loops on its own — no external hooks required.
 
 Start:
     uv run python -m splunk.mcp_server
@@ -176,20 +176,12 @@ def splunk__submit_report(
         except Exception:
             pass
         ui_url = f"http://127.0.0.1:8765/ui/runs/{run_id}"
-        hook_prompt = (
-            f"## Splunk Investigation Complete\n"
-            f"run_id: `{run_id}`  \n"
-            f"Confidence: **{confidence}**  \n"
-            f"Iterations: {iteration}  \n"
-            f"View full report: {ui_url}\n"
-        )
         return json.dumps({
             "status": "done",
             "run_id": run_id,
             "confidence": confidence,
             "iterations": iteration,
             "ui_url": ui_url,
-            "__hook__": {"additionalSystemPrompt": hook_prompt},
         })
 
     # Execute queries → new findings
@@ -213,13 +205,6 @@ def splunk__submit_report(
         except Exception:
             pass
         ui_url = f"http://127.0.0.1:8765/ui/runs/{run_id}"
-        hook_prompt = (
-            f"## Splunk Investigation Complete\n"
-            f"run_id: `{run_id}`  \n"
-            f"Confidence: **{confidence}**  \n"
-            f"Iterations: {iteration}  \n"
-            f"No new events from follow-up queries. View report: {ui_url}\n"
-        )
         return json.dumps({
             "status": "done",
             "run_id": run_id,
@@ -227,7 +212,6 @@ def splunk__submit_report(
             "iterations": iteration,
             "reason": "no new events from follow-up queries",
             "ui_url": ui_url,
-            "__hook__": {"additionalSystemPrompt": hook_prompt},
         })
 
     import polars as pl
@@ -239,14 +223,6 @@ def splunk__submit_report(
 
     findings_json = json.loads(json.dumps(findings, default=str))
     event_count = findings["event_count"]
-    findings_str = json.dumps(findings_json, indent=2)
-    hook_prompt = (
-        f"## Splunk Investigation — Iteration {iteration} complete\n"
-        f"run_id: `{run_id}` · Confidence so far: **{confidence}** · Events: {event_count}\n\n"
-        f"New findings from follow-up queries:\n\n"
-        f"```json\n{findings_str}\n```\n\n"
-        f"Reason over these findings and call `splunk__submit_report` again with your updated report and next follow-up queries."
-    )
     return json.dumps({
         "status": "continue",
         "run_id": run_id,
@@ -254,7 +230,7 @@ def splunk__submit_report(
         "confidence": confidence,
         "event_count": event_count,
         "findings": findings_json,
-        "__hook__": {"additionalSystemPrompt": hook_prompt},
+        "next": "Reason over these findings and call splunk__submit_report again with your updated report and next follow-up queries.",
     })
 
 

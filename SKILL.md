@@ -7,7 +7,7 @@ cwd: /Users/debaditya/workspace/splunk_analysis
 
 # Splunk Investigate
 
-Claude-session investigation loop via MCP tools. The PostToolUse hook in claude-hooks automatically injects next findings into the system prompt after each `splunk__submit_report` call — Claude loops without any manual intervention.
+Claude-session investigation loop via MCP tools. `splunk__submit_report` returns findings directly in its response — Claude reads `status` and loops on its own. No external hooks required.
 
 ## Repo
 
@@ -27,17 +27,17 @@ Server (optional but recommended for UI): `./serve.sh` → `http://127.0.0.1:876
 
 ---
 
-## Loop — how it works (MCP path, primary)
+## Loop — how it works
 
 ```
 splunk__investigate_start(source)   →  {run_id, findings}
 Claude reasons                      →  report + SPL queries
-splunk__submit_report(run_id, ...)  →  PostToolUse hook injects next findings automatically
+splunk__submit_report(run_id, ...)  →  {status, findings} — read directly from response
 Claude reasons again                →  ...
-until: confidence=High | no new events | max 3 iterations
+until: status=done | confidence=High | no new events | max 3 iterations
 ```
 
-The PostToolUse hook in claude-hooks fires after every `splunk__submit_report` call. It extracts the next findings from the tool result and injects them into `additionalSystemPrompt` — Claude sees them on the next turn and continues automatically.
+No external hooks needed. The response from `splunk__submit_report` contains `status` ("continue" or "done") and the next `findings`. Claude reads them and loops.
 
 ---
 
@@ -122,19 +122,9 @@ splunk__submit_report(
 )
 ```
 
-**The PostToolUse hook automatically injects next findings into the system prompt.**  
-You will see them on the next turn — just continue reasoning and call `splunk__submit_report` again.
-
 Response is either:
-- `{status: "continue", findings: {...}}` → hook injects, Claude loops
+- `{status: "continue", findings: {...}}` → read findings, loop back to Step 2
 - `{status: "done", ui_url: "..."}` → investigation complete
-
-Fallback (if MCP server not running):
-```bash
-curl -s -X POST http://127.0.0.1:8765/api/investigate/report \
-  -H "Content-Type: application/json" \
-  -d '{"run_id": "<run_id>", "report": "...", "queries": ["..."]}'
-```
 
 ---
 
