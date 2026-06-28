@@ -12,7 +12,16 @@ Execute all investigation steps sequentially. Do not pause between iterations to
 | `splunk__submit_report` | Submit a markdown report and follow-up SPL queries; returns `{status, findings}` |
 | `splunk__get_findings` | Read current findings for an active run without advancing the loop |
 | `splunk__pause` | Stop the loop after the current iteration |
+| `splunk__lsp_call_chain` | Trace a function/symbol through the microservice call graph to find which code path produced a log error |
 | `splunk__hint` | Inject an analyst hint that shapes the next iteration |
+
+## Before you start
+
+Ask the user once:
+
+> "Do you have the microservice source repo available locally? If yes, provide the absolute path — I'll use it to trace error log sites back through the call graph. If not, I'll proceed with log analysis only."
+
+If the user provides a path, pass it as `repo_path` to `splunk__investigate_start`. If they don't have one or say no, omit `repo_path` and proceed.
 
 ## Investigation Loop
 
@@ -28,6 +37,7 @@ splunk__investigate_start(source="<file or spl>")
 ### Step 2 — Reason
 
 - Read `findings`: spikes, patterns, cert anomalies, host rankings, timeline
+- If `repo_path` is set and findings contain error messages or function names, call `splunk__lsp_call_chain` to trace the log site back through the call graph — use the result to sharpen your hypothesis and queries
 - Form one falsifiable hypothesis about the root cause
 - Draft a short markdown report with `**Confidence:** Low | Medium | High`
 - Write 1–3 follow-up SPL queries that can disprove or refine the hypothesis

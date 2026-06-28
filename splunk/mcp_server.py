@@ -58,16 +58,20 @@ def splunk__investigate_start(
     spl: str = "",
     earliest: str = "-24h",
     latest: str = "now",
+    repo_path: str = "",
 ) -> str:
     """
     Start a Splunk investigation. Loads events, runs detectors, returns structured
     findings for Claude to reason over.
 
     Args:
-        source:   Path to a Splunk export file (JSON or CSV). Use this OR spl.
-        spl:      SPL query string for a live Splunk query. Requires SPLUNK_URL configured.
-        earliest: Earliest time for live query (default: -24h).
-        latest:   Latest time for live query (default: now).
+        source:    Path to a Splunk export file (JSON or CSV). Use this OR spl.
+        spl:       SPL query string for a live Splunk query. Requires SPLUNK_URL configured.
+        earliest:  Earliest time for live query (default: -24h).
+        latest:    Latest time for live query (default: now).
+        repo_path: Optional path to the microservice source repo. When provided, the agent
+                   can call splunk__lsp_call_chain to trace error log sites back through
+                   the call graph. Leave empty to skip code cross-referencing.
 
     Returns JSON with run_id and findings dict.
     """
@@ -106,17 +110,23 @@ def splunk__investigate_start(
             state = _server_state()
             state["df"] = df
             state["findings"] = findings
+            if repo_path:
+                state["repo_path"] = repo_path
         except Exception:
             pass
 
-        return json.dumps({
+        result: dict = {
             "run_id": run_id,
             "source": source_label,
             "event_count": findings["event_count"],
             "findings": json.loads(json.dumps(findings, default=str)),
             "ui_url": f"http://127.0.0.1:8765/ui/runs/{run_id}",
             "next": "Reason over these findings and call splunk__submit_report with your report and follow-up SPL queries.",
-        })
+        }
+        if repo_path:
+            result["repo_path"] = repo_path
+            result["code_context"] = "splunk__lsp_call_chain is available — use it to trace error log sites back through the call graph before writing follow-up queries."
+        return json.dumps(result)
 
     except Exception as exc:
         return json.dumps({"error": str(exc)})
@@ -302,6 +312,114 @@ def splunk__query_examples(area: str = "", limit: int = 20) -> str:
             for r in rows
         ]
         return json.dumps({"examples": examples, "count": len(examples)})
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
+def splunk__lsp_call_chain(
+    run_id: str,
+    symbol: str,
+    file_path: str = "",
+    line: int = 0,
+    direction: str = "callers",
+    depth: int = 3,
+) -> str:
+    """
+    Trace a function or symbol through the microservice call graph using LSP.
+    Use this during the Reason step to find which code path produced a log error.
+
+    Args:
+        run_id:    Active investigation run_id.
+        symbol:    Function or class name to look up (e.g. "validate_cert", "TLSHandler").
+        file_path: Optional absolute path to the file containing the symbol. Speeds up lookup.
+        line:      Optional 1-based line number of the symbol definition.
+        direction: "callers" (who calls this?) or "callees" (what does this call?). Default: callers.
+        depth:     How many levels up/down to trace. Default: 3.
+
+    Returns JSON with the call chain and file locations, or an error if repo_path was not
+    provided at investigate_start or if the symbol cannot be resolved.
+    """
+    import subprocess, pathlib
+
+    state = _server_state()
+    if state.get("run_id") != run_id:
+        return json.dumps({"error": f"run_id {run_id!r} not active"})
+
+    repo_path = state.get("repo_path", "")
+    if not repo_path:
+        return json.dumps({
+            "error": "No repo_path in session. Re-start the investigation with repo_path set to the microservice repo.",
+            "hint": "Call splunk__investigate_start again with repo_path='<path to repo>'.",
+        })
+
+    repo = pathlib.Path(repo_path)
+    if not repo.exists():
+        return json.dumps({"error": f"repo_path does not exist: {repo_path}"})
+
+    try:
+        # Use ripgrep to locate the symbol definition across the repo
+        rg_cmd = ["rg", "--json", "-n", f"def {symbol}|class {symbol}", str(repo)]
+        rg = subprocess.run(rg_cmd, capture_output=True, text=True, timeout=10)
+
+        definitions: list[dict] = []
+        for line_raw in rg.stdout.splitlines():
+            try:
+                obj = json.loads(line_raw)
+                if obj.get("type") == "match":
+                    data = obj["data"]
+                    definitions.append({
+                        "file": data["path"]["text"],
+                        "line": data["line_number"],
+                        "text": data["lines"]["text"].strip(),
+                    })
+            except Exception:
+                continue
+
+        if not definitions:
+            return json.dumps({"error": f"Symbol '{symbol}' not found in {repo_path}"})
+
+        # For each definition, find callers (references) or callees (outgoing calls)
+        results = []
+        for defn in definitions[:3]:
+            ref_cmd = ["rg", "--json", "-n", symbol, str(repo)]
+            ref = subprocess.run(ref_cmd, capture_output=True, text=True, timeout=10)
+
+            refs: list[dict] = []
+            for line_raw in ref.stdout.splitlines():
+                try:
+                    obj = json.loads(line_raw)
+                    if obj.get("type") == "match":
+                        data = obj["data"]
+                        text = data["lines"]["text"].strip()
+                        # Skip the definition itself and comments
+                        if f"def {symbol}" in text or f"class {symbol}" in text:
+                            continue
+                        if text.lstrip().startswith("#"):
+                            continue
+                        refs.append({
+                            "file": data["path"]["text"],
+                            "line": data["line_number"],
+                            "text": text,
+                        })
+                except Exception:
+                    continue
+
+            results.append({
+                "definition": defn,
+                direction: refs[:depth * 5],
+            })
+
+        return json.dumps({
+            "symbol": symbol,
+            "repo": repo_path,
+            "direction": direction,
+            "depth": depth,
+            "results": results,
+        })
+
+    except subprocess.TimeoutExpired:
+        return json.dumps({"error": "Symbol search timed out"})
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 
