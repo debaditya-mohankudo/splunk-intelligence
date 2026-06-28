@@ -23,7 +23,9 @@ The investigation loop is self-contained — `splunk__submit_report` returns `{s
 
 - Python 3.12+
 - [`uv`](https://github.com/astral-sh/uv) — `brew install uv`
-- [Ollama](https://ollama.com) with `qwen2.5:14b` pulled (for the LLM agent path)
+- Splunk instance URL (set `SPLUNK_URL` env var; required for live queries only)
+
+Ollama is **not required**. Copilot or Claude Code handles all reasoning via MCP tools. To use the optional standalone LangGraph/Ollama agent, install the `llm` extra (`uv sync --extra llm`) and run with `--llm`.
 
 ### 2. Install dependencies
 
@@ -56,7 +58,10 @@ uv run python -m splunk --input results/cert_errors.json
 uv run python -m splunk --live --spl "index=pki sourcetype=ocsp_error" --earliest -6h
 
 # Parsers + detectors only, no LLM
-uv run python -m splunk --input results/cert_errors.json --no-llm
+uv run python -m splunk --input results/cert_errors.json
+
+# With standalone Ollama agent (requires uv sync --extra llm + Ollama running)
+uv run python -m splunk --input results/cert_errors.json --llm
 ```
 
 ## Via AI agent (MCP tools)
@@ -119,8 +124,9 @@ Tests are fully deterministic — no Ollama, no Splunk connection, no server req
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SPLUNK_URL` | — | Splunk base URL (required for live queries) |
-| `SPLUNK_LLM_MODEL` | `qwen2.5:14b` | Ollama model |
-| `SPLUNK_AGENT_MAX_ITER` | `10` | ReAct loop cap |
+| `SPLUNK_USE_LLM` | `false` | Set `true` to enable standalone Ollama agent (requires `uv sync --extra llm`) |
+| `SPLUNK_LLM_MODEL` | `qwen2.5:14b` | Ollama model — only used when `SPLUNK_USE_LLM=true` |
+| `SPLUNK_AGENT_MAX_ITER` | `10` | ReAct loop cap — only used when `SPLUNK_USE_LLM=true` |
 | `SPLUNK_SPIKE_THRESHOLD` | `10` | Events/window to trigger a spike |
 | `SPLUNK_SPIKE_WINDOW` | `60` | Spike detection window (seconds) |
 | `SPLUNK_COOKIE_NAME` | `splunkd_8089` | Splunk session cookie name |

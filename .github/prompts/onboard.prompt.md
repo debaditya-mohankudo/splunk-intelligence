@@ -16,8 +16,9 @@ Everything runs on-device — no data leaves the machine.
 
 - Python 3.12+
 - [`uv`](https://github.com/astral-sh/uv) — `brew install uv`
-- [Ollama](https://ollama.com) running locally with `qwen2.5:14b` pulled (for the LLM agent path)
 - Access to the team's Splunk instance URL (set as `SPLUNK_URL` env var)
+
+Ollama is **not required**. Copilot handles all reasoning via MCP tools. To use the optional standalone LangGraph/Ollama agent, install `uv sync --extra llm` and run with `--llm`.
 
 ## First-time setup
 

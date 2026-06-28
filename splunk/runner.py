@@ -73,7 +73,8 @@ def run_pipeline(
     }
     log.detect_done(findings)
 
-    if no_llm:
+    from splunk.config import USE_LLM
+    if no_llm or not USE_LLM:
         report = _findings_to_markdown(findings)
         return findings, report
 
@@ -182,8 +183,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--earliest", default="-24h", help="Earliest time for --live query (default: -24h)")
     p.add_argument("--latest", default="now", help="Latest time for --live query (default: now)")
     p.add_argument("--output", "-o", default="reports/", metavar="DIR", help="Output directory (default: reports/)")
-    p.add_argument("--model", metavar="MODEL", help="Override Ollama model (default: qwen2.5:14b)")
-    p.add_argument("--no-llm", action="store_true", help="Run parsers + detectors only, skip agent")
+    p.add_argument("--model", metavar="MODEL", help="Override Ollama model (default: qwen2.5:14b). Requires --llm.")
+    p.add_argument("--llm", action="store_true", help="Enable standalone LangGraph/Ollama agent (requires uv sync --extra llm and a running Ollama instance)")
     p.add_argument("--dump-findings", action="store_true", help="Print findings JSON to stdout (for pasting into Claude)")
     p.add_argument("--investigate", action="store_true", help="Run iterative investigator loop (requires Splunk REST access for follow-up queries)")
     return p
@@ -212,7 +213,7 @@ def main() -> None:
             input_name = args.input
 
         if args.dump_findings:
-            findings, _ = run_pipeline(df, log, source=input_name, no_llm=True, model=args.model)
+            findings, _ = run_pipeline(df, log, source=input_name, no_llm=not args.llm, model=args.model)
             import json
             print(json.dumps(findings, default=str, indent=2))
             return
@@ -256,7 +257,7 @@ def main() -> None:
             findings, report = run_pipeline(
                 df, log,
                 source=input_name,
-                no_llm=args.no_llm,
+                no_llm=not args.llm,
                 model=args.model,
             )
 

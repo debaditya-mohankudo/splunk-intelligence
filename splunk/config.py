@@ -11,6 +11,11 @@ import os
 # Model
 # ---------------------------------------------------------------------------
 
+# Set SPLUNK_USE_LLM=true to enable the standalone LangGraph/Ollama agent (requires
+# uv sync --extra llm and a running Ollama instance with qwen2.5:14b pulled).
+# Default is false — Copilot or Claude Code handles reasoning via MCP tools instead.
+USE_LLM: bool = os.environ.get("SPLUNK_USE_LLM", "false").lower() in ("true", "1", "on")
+
 LLM_MODEL: str = os.environ.get("SPLUNK_LLM_MODEL", "qwen2.5:14b")
 AGENT_MAX_ITER: int = int(os.environ.get("SPLUNK_AGENT_MAX_ITER", "10"))
 SPLUNK_INDEX: str = os.environ.get("SPLUNK_INDEX", "pki")
