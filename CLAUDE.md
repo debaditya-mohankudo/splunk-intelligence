@@ -90,7 +90,7 @@ Override cookie name via `SPLUNK_COOKIE_NAME` env var.
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `SPLUNK_URL` | — | Splunk base URL (required) |
-| `SPLUNK_LLM_MODEL` | `qwen2.5:32b` | Ollama model |
+| `SPLUNK_LLM_MODEL` | `qwen2.5:14b` | Ollama model |
 | `SPLUNK_AGENT_MAX_ITER` | `10` | ReAct loop cap |
 | `SPLUNK_SPIKE_THRESHOLD` | `10` | Events/window to trigger spike |
 | `SPLUNK_SPIKE_WINDOW` | `60` | Spike detection window (seconds) |

@@ -265,6 +265,48 @@ def splunk__pause(run_id: str) -> str:
 
 
 @mcp.tool()
+def splunk__query_examples(area: str = "", limit: int = 20) -> str:
+    """
+    Return example SPL queries from past investigations stored in splunk.db.
+    Use this to ground follow-up queries in field names and patterns that have
+    actually worked against this Splunk environment.
+
+    Args:
+        area:  Filter by area label (e.g. "tls", "cert", "auth"). Empty = all areas.
+        limit: Max number of examples to return (default 20).
+
+    Returns JSON list of {area, spl, result_rows, run_id, iteration} sorted by
+    most recent first. result_rows is the event count the query returned, or null
+    if it was never executed.
+    """
+    try:
+        from splunk.db import _connect
+        with _connect() as conn:
+            if area:
+                rows = conn.execute(
+                    "SELECT area, spl, result_rows, run_id, iteration "
+                    "FROM investigation_queries "
+                    "WHERE area = ? "
+                    "ORDER BY rowid DESC LIMIT ?",
+                    (area, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT area, spl, result_rows, run_id, iteration "
+                    "FROM investigation_queries "
+                    "ORDER BY rowid DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        examples = [
+            {"area": r[0], "spl": r[1], "result_rows": r[2], "run_id": r[3], "iteration": r[4]}
+            for r in rows
+        ]
+        return json.dumps({"examples": examples, "count": len(examples)})
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+
+
+@mcp.tool()
 def splunk__hint(run_id: str, hint: str) -> str:
     """
     Inject an analyst hint into the investigation for the next iteration.

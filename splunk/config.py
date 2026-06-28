@@ -11,7 +11,7 @@ import os
 # Model
 # ---------------------------------------------------------------------------
 
-LLM_MODEL: str = os.environ.get("SPLUNK_LLM_MODEL", "qwen2.5:32b")
+LLM_MODEL: str = os.environ.get("SPLUNK_LLM_MODEL", "qwen2.5:14b")
 AGENT_MAX_ITER: int = int(os.environ.get("SPLUNK_AGENT_MAX_ITER", "10"))
 SPLUNK_INDEX: str = os.environ.get("SPLUNK_INDEX", "pki")
 INVESTIGATOR_MAX_ITER: int = int(os.environ.get("SPLUNK_INVESTIGATOR_MAX_ITER", "3"))

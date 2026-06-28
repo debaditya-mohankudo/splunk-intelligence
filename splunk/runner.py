@@ -182,7 +182,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--earliest", default="-24h", help="Earliest time for --live query (default: -24h)")
     p.add_argument("--latest", default="now", help="Latest time for --live query (default: now)")
     p.add_argument("--output", "-o", default="reports/", metavar="DIR", help="Output directory (default: reports/)")
-    p.add_argument("--model", metavar="MODEL", help="Override Ollama model (default: qwen2.5:32b)")
+    p.add_argument("--model", metavar="MODEL", help="Override Ollama model (default: qwen2.5:14b)")
     p.add_argument("--no-llm", action="store_true", help="Run parsers + detectors only, skip agent")
     p.add_argument("--dump-findings", action="store_true", help="Print findings JSON to stdout (for pasting into Claude)")
     p.add_argument("--investigate", action="store_true", help="Run iterative investigator loop (requires Splunk REST access for follow-up queries)")
