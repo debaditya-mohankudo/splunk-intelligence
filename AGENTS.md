@@ -7,7 +7,7 @@ Execute all investigation steps sequentially. Do not pause between iterations to
 ## MCP Tools
 
 | Tool | Purpose |
-|------|---------|
+| --- | --- |
 | `splunk__investigate_start` | Load a file or live SPL query, run deterministic detectors, return structured `findings` + `run_id` |
 | `splunk__submit_report` | Submit a markdown report and follow-up SPL queries; returns `{status, findings}` |
 | `splunk__get_findings` | Read current findings for an active run without advancing the loop |
@@ -18,13 +18,15 @@ Execute all investigation steps sequentially. Do not pause between iterations to
 
 Repeat this loop until `status == "done"`:
 
-**Step 1 — Start**
-```
+### Step 1 — Start
+
+```text
 splunk__investigate_start(source="<file or spl>")
 → {run_id, findings, event_count}
 ```
 
-**Step 2 — Reason**
+### Step 2 — Reason
+
 - Read `findings`: spikes, patterns, cert anomalies, host rankings, timeline
 - Form one falsifiable hypothesis about the root cause
 - Draft a short markdown report with `**Confidence:** Low | Medium | High`
@@ -32,8 +34,9 @@ splunk__investigate_start(source="<file or spl>")
   - Prefix each query with a `-- area: <label>` comment line
   - Keep queries grounded in fields and values present in the findings
 
-**Step 3 — Submit**
-```
+### Step 3 — Submit
+
+```text
 splunk__submit_report(
   run_id="<run_id>",
   report="<markdown report>",
@@ -42,7 +45,8 @@ splunk__submit_report(
 → {status, findings, confidence, event_count}
 ```
 
-**Step 4 — Loop or stop**
+### Step 4 — Loop or stop
+
 - `status == "continue"` → go back to Step 2 with the new `findings`
 - `status == "done"` → present the final summary and `ui_url` to the user
 
@@ -57,10 +61,27 @@ splunk__submit_report(
 ## Done conditions (server-enforced)
 
 `submit_report` returns `status: "done"` when any of these are true:
+
 - Report contains `**Confidence:** High`
 - Iteration count reaches `SPLUNK_INVESTIGATOR_MAX_ITER` (default 3)
 - No follow-up queries were provided
 - Follow-up queries return no new events
+
+## Authentication (live queries only)
+
+Live SPL queries (`spl=` argument to `splunk__investigate_start`) require a valid Splunk session cookie. Splunk uses SSO/SAML — password-based REST login is not available.
+
+### One-time setup (human step)
+
+```bash
+uv run python -m splunk.auth
+```
+
+This launches a visible Chromium window (via Playwright). The user completes SSO login manually. The session cookie (`splunkd_8089` by default) is saved to `~/.splunk/auth.json`.
+
+The MCP tools load the cookie automatically from `~/.splunk/auth.json` on every live query. If the cookie is expired, `splunk__investigate_start` returns an error — tell the user to re-run `uv run python -m splunk.auth`.
+
+Do not attempt to automate the SSO login or pass credentials directly — the browser step is intentional.
 
 ## Report format
 
@@ -72,13 +93,16 @@ splunk__submit_report(
 **Iteration:** 2
 
 ### Hypothesis
+
 <one sentence root cause>
 
 ### Evidence
+
 - <finding 1>
 - <finding 2>
 
 ### Follow-up needed
+
 - <what the next queries are trying to confirm>
 ```
 

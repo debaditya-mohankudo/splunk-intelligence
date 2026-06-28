@@ -29,8 +29,8 @@ def _load_fixture(name: str) -> list[dict]:
 
 def _make_df(fixture_name: str) -> pl.DataFrame:
     from splunk.parsers import parse_splunk_json
-    rows = _load_fixture(fixture_name)
-    return parse_splunk_json(rows)
+    raw = (FIXTURES / fixture_name).read_text()
+    return parse_splunk_json(raw)
 
 
 def _active_state(run_id: str, df: pl.DataFrame, iteration: int = 0) -> dict:
