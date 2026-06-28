@@ -1,0 +1,42 @@
+{"results": [
+  {
+    "_time": "2026-06-27T14:29:33Z",
+    "host": "WORKSTATION-04",
+    "sourcetype": "WinEventLog:Security",
+    "source": "WinEventLog:Security",
+    "_raw": "An account failed to log on. Subject: Account Name: SYSTEM. Failure Reason: Unknown user name or bad password.",
+    "EventCode": "4625",
+    "Computer": "WORKSTATION-04",
+    "LogName": "Security",
+    "TargetUserName": "admin",
+    "FailureReason": "Unknown user name or bad password",
+    "SubjectUserName": "SYSTEM",
+    "IpAddress": "192.168.1.100",
+    "event_severity": "WARNING"
+  },
+  {
+    "_time": "2026-06-27T14:30:18Z",
+    "host": "SERVER-DB-02",
+    "sourcetype": "WinEventLog:System",
+    "source": "WinEventLog:System",
+    "_raw": "The DNS client encountered an error while trying to initialize the TLS connection. Error code: 0x80004005 - Unspecified error.",
+    "EventCode": "3046",
+    "Computer": "SERVER-DB-02",
+    "LogName": "System",
+    "Provider": "DNS",
+    "ErrorCode": "0x80004005",
+    "event_severity": "ERROR"
+  },
+  {
+    "_time": "2026-06-27T14:31:04Z",
+    "host": "FILESERVER-01",
+    "sourcetype": "WinEventLog:Application",
+    "source": "WinEventLog:Application",
+    "_raw": "Application encountered a critical error. Source: Microsoft.SharePoint. Details: Access denied to resource /sites/secured.",
+    "EventCode": "1000",
+    "Computer": "FILESERVER-01",
+    "LogName": "Application",
+    "Source": "Microsoft SharePoint",
+    "event_severity": "CRITICAL"
+  }
+]}
