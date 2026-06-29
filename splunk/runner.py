@@ -1,9 +1,8 @@
 """
-CLI orchestrator — wires parsers → detectors → agent into one command.
+CLI orchestrator — wires parsers → detectors into one command.
 
 Usage:
     python -m splunk.runner --input results/cert_errors.json
-    python -m splunk.runner --input results/cert_errors.csv --no-llm
     python -m splunk.runner --live --spl "index=pki sourcetype=ocsp_error" --output reports/
     cat results.json | python -m splunk.runner --input -
 """
@@ -46,8 +45,6 @@ def run_pipeline(
     df: pl.DataFrame,
     log: RunLogger,
     source: str = "",
-    no_llm: bool = False,
-    model: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     """
     Parse → detect → (optionally) analyse.
@@ -73,31 +70,14 @@ def run_pipeline(
     }
     log.detect_done(findings)
 
-    from splunk.config import USE_LLM
-    if no_llm or not USE_LLM:
-        report = _findings_to_markdown(findings)
-        return findings, report
-
-    # Agent
-    if model:
-        import os
-        os.environ["SPLUNK_LLM_MODEL"] = model
-
-    from splunk.agent import analyse
-    from splunk.config import LLM_MODEL
-    report, _ = analyse(findings)
-
-    # Detect whether format_report was called by checking for report header
-    report_captured = report.startswith("# Splunk Investigation Report")
-    log.agent_done(model=model or LLM_MODEL, iterations=-1, report_captured=report_captured)
-
+    report = _findings_to_markdown(findings)
     return findings, report
 
 
 def _findings_to_markdown(findings: dict[str, Any]) -> str:
-    """Minimal markdown report when --no-llm is set."""
+    """Generate a markdown findings report."""
     lines = [
-        "# Splunk Findings (no-llm mode)",
+        "# Splunk Findings",
         "",
         f"**Events analysed:** {findings['event_count']}",
         f"**Severity breakdown:** {findings['severity']}",
@@ -183,8 +163,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--earliest", default="-24h", help="Earliest time for --live query (default: -24h)")
     p.add_argument("--latest", default="now", help="Latest time for --live query (default: now)")
     p.add_argument("--output", "-o", default="reports/", metavar="DIR", help="Output directory (default: reports/)")
-    p.add_argument("--model", metavar="MODEL", help="Override Ollama model (default: qwen2.5:14b). Requires --llm.")
-    p.add_argument("--llm", action="store_true", help="Enable standalone LangGraph/Ollama agent (requires uv sync --extra llm and a running Ollama instance)")
     p.add_argument("--dump-findings", action="store_true", help="Print findings JSON to stdout (for pasting into Claude)")
     p.add_argument("--investigate", action="store_true", help="Run iterative investigator loop (requires Splunk REST access for follow-up queries)")
     return p
@@ -213,7 +191,7 @@ def main() -> None:
             input_name = args.input
 
         if args.dump_findings:
-            findings, _ = run_pipeline(df, log, source=input_name, no_llm=not args.llm, model=args.model)
+            findings, _ = run_pipeline(df, log, source=input_name)
             import json
             print(json.dumps(findings, default=str, indent=2))
             return
@@ -254,12 +232,7 @@ def main() -> None:
                     print()
         else:
             # Pipeline
-            findings, report = run_pipeline(
-                df, log,
-                source=input_name,
-                no_llm=not args.llm,
-                model=args.model,
-            )
+            findings, report = run_pipeline(df, log, source=input_name)
 
         # Write report
         report_path = _write_report(report, args.output, input_name, log)

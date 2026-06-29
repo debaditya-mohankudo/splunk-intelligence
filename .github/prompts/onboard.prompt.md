@@ -18,8 +18,6 @@ Everything runs on-device — no data leaves the machine.
 - [`uv`](https://github.com/astral-sh/uv) — `brew install uv`
 - Access to the team's Splunk instance URL (set as `SPLUNK_URL` env var)
 
-Ollama is **not required**. Copilot handles all reasoning via MCP tools. To use the optional standalone LangGraph/Ollama agent, install `uv sync --extra llm` and run with `--llm`.
-
 ## First-time setup
 
 ```bash
@@ -46,7 +44,7 @@ Repeat this when your session expires (usually after 8–24 hours).
 
 ```
 splunk/
-  config.py        — all tunables (model, thresholds, paths)
+  config.py        — all tunables (thresholds, paths)
   parsers.py       — parse Splunk JSON/CSV exports → Polars DataFrame
   detectors.py     — rule-based detectors (spikes, cert anomalies, rankings)
   investigator.py  — builds findings dict from DataFrame
@@ -59,7 +57,7 @@ splunk/
   logger.py        — structured JSON-lines logging
 
 tests/
-  test_mcp_tools.py   — unit tests for all MCP tools (no Ollama, no Splunk needed)
+  test_mcp_tools.py   — unit tests for all MCP tools (no Splunk needed)
   fixtures/           — sample Splunk exports for tests
 
 reports/            — generated markdown reports (gitignored)
@@ -105,15 +103,13 @@ Copilot will call `splunk__investigate_start`, reason over findings, and loop vi
 uv run pytest tests/
 ```
 
-Tests are fully deterministic — no Ollama, no Splunk connection, no server needed.
+Tests are fully deterministic — no Splunk connection, no server needed.
 
 ## Key environment variables
 
 | Variable | Required | Default | Purpose |
 |---|---|---|---|
 | `SPLUNK_URL` | Yes (live) | — | Splunk base URL |
-| `SPLUNK_LLM_MODEL` | No | `qwen2.5:14b` | Ollama model name |
-| `SPLUNK_AGENT_MAX_ITER` | No | `10` | ReAct loop cap |
 | `SPLUNK_COOKIE_NAME` | No | `splunkd_8089` | Splunk session cookie name |
 | `LOG_LEVEL` | No | `DEBUG` | Log verbosity |
 
@@ -122,5 +118,5 @@ Put these in a `.env` file at the repo root — it is gitignored.
 ## Where to go next
 
 - `AGENTS.md` — investigation loop rules and MCP tool reference for Copilot
-- `splunk/config.py` — tune thresholds, model, paths
+- `splunk/config.py` — tune thresholds, paths
 - `CLAUDE.md` — instructions for Claude Code sessions (same repo, different agent)

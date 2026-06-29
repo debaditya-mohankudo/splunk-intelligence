@@ -1,4 +1,4 @@
-# Splunk Intelligence — Local LLM Analysis Stack
+# Splunk Intelligence
 
 A local Splunk investigation stack that ingests exports (JSON/CSV) or runs live SPL queries, applies deterministic detectors, and drives a structured multi-iteration investigation loop via MCP tools exposed to AI agents (GitHub Copilot or Claude Code). Everything runs on-device — no data leaves the machine.
 
@@ -24,8 +24,6 @@ The investigation loop is self-contained — `splunk__submit_report` returns `{s
 - Python 3.12+
 - [`uv`](https://github.com/astral-sh/uv) — `brew install uv`
 - Splunk instance URL (set `SPLUNK_URL` env var; required for live queries only)
-
-Ollama is **not required**. Copilot or Claude Code handles all reasoning via MCP tools. To use the optional standalone LangGraph/Ollama agent, install the `llm` extra (`uv sync --extra llm`) and run with `--llm`.
 
 ### 2. Install dependencies
 
@@ -56,12 +54,6 @@ uv run python -m splunk --input results/cert_errors.json
 
 # Live SPL query
 uv run python -m splunk --live --spl "index=pki sourcetype=ocsp_error" --earliest -6h
-
-# Parsers + detectors only, no LLM
-uv run python -m splunk --input results/cert_errors.json
-
-# With standalone Ollama agent (requires uv sync --extra llm + Ollama running)
-uv run python -m splunk --input results/cert_errors.json --llm
 ```
 
 ## Via AI agent (MCP tools)
@@ -103,13 +95,13 @@ An interactive onboarding prompt is available for GitHub Copilot. In VS Code Cop
 uv run pytest tests/
 ```
 
-Tests are fully deterministic — no Ollama, no Splunk connection, no server required. Fixtures live in `tests/fixtures/`.
+Tests are fully deterministic — no Splunk connection, no server required. Fixtures live in `tests/fixtures/`.
 
 ## Key files
 
 | File | Purpose |
 | --- | --- |
-| `splunk/config.py` | All tunables — model, thresholds, paths, auth |
+| `splunk/config.py` | All tunables — thresholds, paths, auth |
 | `splunk/parsers.py` | `parse_splunk_json` / `parse_splunk_csv` → `pl.DataFrame` |
 | `splunk/detectors.py` | `detect_spikes`, `detect_cert_anomalies`, `host_error_ranking`, etc. |
 | `splunk/mcp_server.py` | FastMCP server — 6 investigation tools |
@@ -124,9 +116,6 @@ Tests are fully deterministic — no Ollama, no Splunk connection, no server req
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SPLUNK_URL` | — | Splunk base URL (required for live queries) |
-| `SPLUNK_USE_LLM` | `false` | Set `true` to enable standalone Ollama agent (requires `uv sync --extra llm`) |
-| `SPLUNK_LLM_MODEL` | `qwen2.5:14b` | Ollama model — only used when `SPLUNK_USE_LLM=true` |
-| `SPLUNK_AGENT_MAX_ITER` | `10` | ReAct loop cap — only used when `SPLUNK_USE_LLM=true` |
 | `SPLUNK_SPIKE_THRESHOLD` | `10` | Events/window to trigger a spike |
 | `SPLUNK_SPIKE_WINDOW` | `60` | Spike detection window (seconds) |
 | `SPLUNK_COOKIE_NAME` | `splunkd_8089` | Splunk session cookie name |
