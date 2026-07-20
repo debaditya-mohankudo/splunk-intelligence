@@ -61,7 +61,7 @@ uv run python -m splunk.auth
 |------|---------|
 | `splunk/config.py` | All tunables — cert fields, keywords, thresholds, auth paths, model name |
 | `splunk/parsers.py` | `parse_splunk_json` / `parse_splunk_csv` → `pl.DataFrame`; timestamp, cert, timeline transforms |
-| `splunk/detectors.py` | `detect_spikes`, `detect_patterns`, `detect_cert_anomalies`, `correlate_events`, `severity_summary`, `host_error_ranking` |
+| `splunk/detectors.py` | `detect_spikes`, `detect_patterns`, `detect_cert_anomalies`, `correlate_events`, `severity_summary`, `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies` |
 | `splunk/agent.py` | LangGraph ReAct graph, 4 tools, `analyse(findings) -> str` |
 | `splunk/client.py` | `run_query(spl)` → submit → poll → fetch → parse |
 | `splunk/auth.py` | Playwright SSO, extracts cookie → `~/.splunk/auth.json` |
@@ -78,6 +78,24 @@ uv run python -m splunk.auth
 - `LOG_LEVEL` defaults to `DEBUG` — every run is disposable, log freely
 - Tests use `tests/fixtures/` for input data; never call Ollama or Splunk in tests
 - `splunk.db`, `logs/`, `reports/`, `results/` are gitignored
+
+### Future optimization: parallel detectors on large data
+
+`_build_findings` (in `investigator.py` / `runner.py`) currently calls each detector in
+`detectors.py` sequentially in Python. Not worth changing until real dataset sizes make
+this a measured bottleneck — premature otherwise.
+
+When it is warranted, prefer **Polars-native parallelism** over LangGraph nodes or
+`concurrent.futures`: convert the frame-native detectors (`detect_patterns`,
+`severity_summary`, `host_error_ranking`, `detect_cert_anomalies`, `detect_slow_queries`,
+`detect_numeric_anomalies`)
+to `pl.LazyFrame` query chains and run them together via `pl.collect_all([...])`. This
+schedules on Polars' own Rust-side thread pool, sidestepping the GIL entirely rather than
+fighting it through Python threads/async.
+
+Note: `detect_spikes` and `correlate_events` use Python `for` loops over rows (sliding
+time windows) and can't be expressed as lazy Polars chains — they'd stay sequential even
+after this change.
 
 ## Auth
 
@@ -98,6 +116,9 @@ Override cookie name via `SPLUNK_COOKIE_NAME` env var.
 | `SPLUNK_AGENT_MAX_ITER` | `10` | ReAct loop cap (only used when `SPLUNK_USE_LLM=true`) |
 | `SPLUNK_SPIKE_THRESHOLD` | `10` | Events/window to trigger spike |
 | `SPLUNK_SPIKE_WINDOW` | `60` | Spike detection window (seconds) |
+| `SPLUNK_SLOW_QUERY_THRESHOLD_MS` | `1000` | Duration (ms) above which an event is flagged as a slow query |
+| `SPLUNK_ANOMALY_WINDOW` | `20` | Rolling window size (events) for z-score anomaly detection |
+| `SPLUNK_ANOMALY_Z_THRESHOLD` | `3.0` | \|z-score\| above which an event is flagged as a numeric anomaly |
 | `SPLUNK_COOKIE_NAME` | `splunkd_8089` | Splunk session cookie name |
 | `SPLUNK_AUTH_PATH` | `~/.splunk/auth.json` | Cookie persist path |
 | `LOG_LEVEL` | `DEBUG` | Logging verbosity |

@@ -32,6 +32,22 @@ CERT_ANOMALY_KEYWORDS: list[str] = [
 SPIKE_WINDOW_SECONDS: int = int(os.environ.get("SPLUNK_SPIKE_WINDOW", "60"))
 SPIKE_THRESHOLD: int = int(os.environ.get("SPLUNK_SPIKE_THRESHOLD", "10"))
 CORRELATE_WINDOW_SECONDS: int = int(os.environ.get("SPLUNK_CORRELATE_WINDOW", "60"))
+SLOW_QUERY_THRESHOLD_MS: int = int(os.environ.get("SPLUNK_SLOW_QUERY_THRESHOLD_MS", "1000"))
+
+# Candidate field names for query/request duration, checked in order.
+DURATION_FIELDS: list[str] = [
+    "duration_ms", "duration", "elapsed", "elapsed_ms",
+    "response_time", "run_time", "query_time", "latency", "latency_ms",
+]
+
+ANOMALY_ROLLING_WINDOW: int = int(os.environ.get("SPLUNK_ANOMALY_WINDOW", "20"))
+ANOMALY_Z_THRESHOLD: float = float(os.environ.get("SPLUNK_ANOMALY_Z_THRESHOLD", "3.0"))
+
+# Candidate numeric field names to scan for rolling z-score anomalies, checked in order.
+ANOMALY_NUMERIC_FIELDS: list[str] = [
+    "duration_ms", "duration", "elapsed", "response_time",
+    "bytes", "bytes_out", "bytes_in", "status", "response_code",
+]
 
 # ---------------------------------------------------------------------------
 # Auth

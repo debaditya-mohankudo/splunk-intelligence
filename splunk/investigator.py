@@ -19,7 +19,9 @@ from splunk.config import INVESTIGATOR_MAX_ITER
 from splunk.detectors import (
     correlate_events,
     detect_cert_anomalies,
+    detect_numeric_anomalies,
     detect_patterns,
+    detect_slow_queries,
     detect_spikes,
     host_error_ranking,
     severity_summary,
@@ -40,6 +42,8 @@ def _build_findings(df: pl.DataFrame) -> dict[str, Any]:
         "correlations": correlate_events(df),
         "severity": severity_summary(df),
         "host_ranking": host_error_ranking(df),
+        "slow_queries": detect_slow_queries(df),
+        "numeric_anomalies": detect_numeric_anomalies(df),
         "event_count": df.height,
     }
 

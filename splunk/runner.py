@@ -21,7 +21,9 @@ import polars as pl
 from splunk.detectors import (
     correlate_events,
     detect_cert_anomalies,
+    detect_numeric_anomalies,
     detect_patterns,
+    detect_slow_queries,
     detect_spikes,
     host_error_ranking,
     severity_summary,
@@ -66,6 +68,8 @@ def run_pipeline(
         "correlations": correlate_events(df),
         "severity": severity_summary(df),
         "host_ranking": host_error_ranking(df),
+        "slow_queries": detect_slow_queries(df),
+        "numeric_anomalies": detect_numeric_anomalies(df),
         "event_count": df.height,
     }
     log.detect_done(findings)
@@ -94,6 +98,20 @@ def _findings_to_markdown(findings: dict[str, Any]) -> str:
     lines += ["\n## Top Error Hosts"]
     for h in findings["host_ranking"][:5]:
         lines.append(f"- {h['host']}: {h['error_count']} errors")
+
+    lines += [f"\n## Slow Queries ({len(findings['slow_queries'])})"]
+    for q in findings["slow_queries"][:10]:
+        host = f" [{q['host']}]" if "host" in q else ""
+        lines.append(f"- {q['duration_ms']:.0f}ms{host} — {q.get('query', '')}")
+
+    lines += [f"\n## Numeric Anomalies ({len(findings['numeric_anomalies'])})"]
+    for a in findings["numeric_anomalies"][:10]:
+        host = f" [{a['host']}]" if "host" in a else ""
+        tainted = " (likely window-contamination artifact)" if a.get("window_contaminated") else ""
+        lines.append(
+            f"- {a['field']}={a['value']:.2f}{host} — z={a['z_score']:.2f} "
+            f"(mean={a['rolling_mean']:.2f}, std={a['rolling_std']:.2f}) at {a['time']}{tainted}"
+        )
 
     return "\n".join(lines)
 
@@ -138,6 +156,8 @@ def _stdout_summary(findings: dict[str, Any], report_path: Path) -> None:
         len(findings["spikes"])
         + len(findings["cert_anomalies"])
         + len(findings["patterns"])
+        + len(findings["slow_queries"])
+        + len(findings["numeric_anomalies"])
     )
     top_host = findings["host_ranking"][0]["host"] if findings["host_ranking"] else "n/a"
     print(

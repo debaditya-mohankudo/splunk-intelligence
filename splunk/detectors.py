@@ -11,7 +11,12 @@ import logging
 
 import polars as pl
 
+from splunk.config import ANOMALY_NUMERIC_FIELDS as _ANOMALY_NUMERIC_FIELDS
+from splunk.config import ANOMALY_ROLLING_WINDOW as _DEFAULT_ANOMALY_WINDOW
+from splunk.config import ANOMALY_Z_THRESHOLD as _DEFAULT_ANOMALY_Z_THRESHOLD
 from splunk.config import CERT_ANOMALY_KEYWORDS as _DEFAULT_CERT_KEYWORDS
+from splunk.config import DURATION_FIELDS as _DURATION_FIELDS
+from splunk.config import SLOW_QUERY_THRESHOLD_MS as _DEFAULT_SLOW_QUERY_THRESHOLD_MS
 
 logger = logging.getLogger(__name__)
 
@@ -279,3 +284,160 @@ def host_error_ranking(df: pl.DataFrame) -> list[dict]:
     else:
         logger.info("host_error_ranking: no ERROR/CRITICAL events found")
     return result
+
+
+# ---------------------------------------------------------------------------
+# Slow query detection
+# ---------------------------------------------------------------------------
+
+def detect_slow_queries(
+    df: pl.DataFrame,
+    threshold_ms: int = _DEFAULT_SLOW_QUERY_THRESHOLD_MS,
+) -> list[dict]:
+    """Return events whose duration exceeds threshold_ms, sorted slowest first."""
+    logger.debug("detect_slow_queries: threshold_ms=%d events=%d", threshold_ms, df.height)
+    if df.is_empty():
+        logger.debug("detect_slow_queries: skipped — empty DataFrame")
+        return []
+
+    duration_col = next((c for c in _DURATION_FIELDS if c in df.columns), None)
+    if not duration_col:
+        logger.debug("detect_slow_queries: skipped — no duration field found (checked %s)", _DURATION_FIELDS)
+        return []
+
+    durations = df.with_columns(pl.col(duration_col).cast(pl.Float64, strict=False).alias("_duration_ms"))
+    slow = durations.filter(pl.col("_duration_ms") > threshold_ms).sort("_duration_ms", descending=True)
+    if slow.is_empty():
+        logger.info("detect_slow_queries: no events exceeded %dms threshold", threshold_ms)
+        return []
+
+    host_col = next((c for c in ("host", "src", "hostname") if c in slow.columns), None)
+    query_col = next((c for c in ("query", "search", "spl", "_raw") if c in slow.columns), None)
+    time_col = "time" if "time" in slow.columns else None
+
+    results = []
+    for row in slow.to_dicts():
+        entry = {"duration_ms": row["_duration_ms"], "field": duration_col}
+        if host_col:
+            entry["host"] = row[host_col]
+        if query_col:
+            entry["query"] = str(row[query_col])[:200]
+        if time_col and row[time_col] is not None:
+            entry["time"] = row[time_col].isoformat()
+        results.append(entry)
+
+    logger.info("detect_slow_queries: %d event(s) exceeded %dms (slowest=%.1fms)",
+                len(results), threshold_ms, results[0]["duration_ms"])
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Rolling z-score numeric anomaly detection
+# ---------------------------------------------------------------------------
+
+def detect_numeric_anomalies(
+    df: pl.DataFrame,
+    field: str | None = None,
+    window: int = _DEFAULT_ANOMALY_WINDOW,
+    z_threshold: float = _DEFAULT_ANOMALY_Z_THRESHOLD,
+) -> list[dict]:
+    """
+    Flag events whose value on a numeric field deviates more than z_threshold
+    rolling standard deviations from the rolling mean. Requires 'time' column
+    to establish event order; events are sorted chronologically first.
+
+    If `field` is not given, auto-detects the first matching column from
+    config.ANOMALY_NUMERIC_FIELDS.
+    """
+    logger.debug("detect_numeric_anomalies: field=%s window=%d z_threshold=%.1f events=%d",
+                 field, window, z_threshold, df.height)
+    if df.is_empty() or "time" not in df.columns:
+        logger.debug("detect_numeric_anomalies: skipped — empty DataFrame or no 'time' column")
+        return []
+
+    numeric_col = field or next((c for c in _ANOMALY_NUMERIC_FIELDS if c in df.columns), None)
+    if not numeric_col or numeric_col not in df.columns:
+        logger.debug("detect_numeric_anomalies: skipped — no numeric field found (checked %s)",
+                     _ANOMALY_NUMERIC_FIELDS)
+        return []
+
+    timed = df.filter(pl.col("time").is_not_null()).sort("time")
+    if timed.height < window + 1:
+        logger.debug("detect_numeric_anomalies: skipped — not enough events (%d) for window=%d",
+                     timed.height, window)
+        return []
+
+    scored = timed.with_columns(
+        pl.col(numeric_col).cast(pl.Float64, strict=False).alias("_value")
+    ).with_columns(
+        pl.col("_value").rolling_mean(window_size=window).alias("_roll_mean"),
+        pl.col("_value").rolling_std(window_size=window).alias("_roll_std"),
+    ).with_columns(
+        ((pl.col("_value") - pl.col("_roll_mean")) / pl.col("_roll_std")).alias("_z")
+    ).with_row_index("_idx")
+
+    anomalies_chrono = scored.filter(
+        pl.col("_z").is_finite() & pl.col("_z").abs().gt(z_threshold)
+    ).sort("_idx")
+
+    if anomalies_chrono.is_empty():
+        logger.info("detect_numeric_anomalies: no anomalies found on field=%s", numeric_col)
+        return []
+
+    # A flagged event whose rolling window still contains an earlier flagged
+    # event is likely an artifact of the spike polluting the rolling mean/std,
+    # not a genuine independent anomaly. Cluster consecutive flags within
+    # `window` rows of each other and tag/log every non-leading member.
+    tainted_by: dict[int, int] = {}  # row idx -> idx of the cluster's leading (highest |z|) anomaly
+    rows = anomalies_chrono.to_dicts()
+    cluster: list[dict] = []
+
+    def _flush_cluster(members: list[dict]) -> None:
+        if len(members) <= 1:
+            return
+        leader = max(members, key=lambda r: abs(r["_z"]))
+        for m in members:
+            if m["_idx"] != leader["_idx"]:
+                tainted_by[m["_idx"]] = leader["_idx"]
+        logger.warning(
+            "detect_numeric_anomalies: %d flagged event(s) within window=%d of a prior spike "
+            "on field=%s — likely rolling-window contamination from the anomaly at %s (z=%.2f), "
+            "not independent anomalies",
+            len(members) - 1, window, numeric_col,
+            leader["time"].isoformat() if leader["time"] is not None else "?",
+            leader["_z"],
+        )
+
+    for row in rows:
+        if cluster and row["_idx"] - cluster[-1]["_idx"] <= window:
+            cluster.append(row)
+        else:
+            _flush_cluster(cluster)
+            cluster = [row]
+    _flush_cluster(cluster)
+
+    anomalies = anomalies_chrono.sort(pl.col("_z").abs(), descending=True)
+    host_col = next((c for c in ("host", "src", "hostname") if c in anomalies.columns), None)
+
+    results = []
+    for row in anomalies.to_dicts():
+        entry = {
+            "field": numeric_col,
+            "value": row["_value"],
+            "z_score": row["_z"],
+            "rolling_mean": row["_roll_mean"],
+            "rolling_std": row["_roll_std"],
+            "time": row["time"].isoformat() if row["time"] is not None else None,
+            "window_contaminated": row["_idx"] in tainted_by,
+        }
+        if host_col:
+            entry["host"] = row[host_col]
+        results.append(entry)
+
+    n_tainted = len(tainted_by)
+    logger.info(
+        "detect_numeric_anomalies: %d anomal(y/ies) on field=%s (max |z|=%.2f), "
+        "%d flagged as likely window-contamination artifacts",
+        len(results), numeric_col, abs(results[0]["z_score"]), n_tainted,
+    )
+    return results
