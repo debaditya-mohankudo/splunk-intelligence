@@ -11,6 +11,14 @@ SPLUNK_INDEX: str = os.environ.get("SPLUNK_INDEX", "pki")
 INVESTIGATOR_MAX_ITER: int = int(os.environ.get("SPLUNK_INVESTIGATOR_MAX_ITER", "3"))
 
 # ---------------------------------------------------------------------------
+# Standalone LangGraph/Ollama agent (splunk/agent.py) — optional fallback for
+# environments without Copilot/Claude Code. Requires `uv sync --extra llm`.
+# ---------------------------------------------------------------------------
+
+LLM_MODEL: str = os.environ.get("SPLUNK_LLM_MODEL", "qwen2.5:14b")
+AGENT_MAX_ITER: int = int(os.environ.get("SPLUNK_AGENT_MAX_ITER", "10"))
+
+# ---------------------------------------------------------------------------
 # PKI / cert field names
 # ---------------------------------------------------------------------------
 

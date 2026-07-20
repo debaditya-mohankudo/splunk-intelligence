@@ -4,7 +4,7 @@
 
 Python tool that ingests Splunk exports (JSON/CSV) or fetches live via REST, runs deterministic Polars-based parsers and detectors, then exposes structured findings to an AI agent (GitHub Copilot or Claude Code) via FastMCP tools. The agent handles all reasoning and drives the investigation loop. Everything runs on-device — no data leaves the machine.
 
-Ollama is **not required** for the primary path. The optional `--llm` flag enables a standalone LangGraph/Qwen agent for environments without Copilot/Claude.
+Ollama is **not required** for the primary path. The optional `--investigate` flag enables a standalone LangGraph/Qwen agent for environments without Copilot/Claude.
 
 ## Architecture
 
@@ -13,7 +13,7 @@ Splunk export (JSON/CSV)  ──or──  Splunk REST API (via auth.py + client.
     └─> splunk/parsers.py       # Polars DataFrame: field extraction, timestamp normalisation, timeline
     └─> splunk/detectors.py     # rule-based detection: spikes, patterns, cert anomalies, host ranking
     └─> splunk/mcp_server.py    # FastMCP tools — Copilot/Claude drives the investigation loop
-    └─> splunk/agent.py         # optional: LangGraph ReAct via Ollama (--llm flag only)
+    └─> splunk/agent.py         # optional: LangGraph ReAct via Ollama (--investigate flag only)
     └─> splunk/runner.py        # CLI orchestrator — wires everything, emits run_id
     └─> reports/<stem>_<ts>.md  # markdown investigation report
     └─> logs/<run_id>.jsonl     # structured JSON-lines log per run
@@ -40,7 +40,7 @@ uv sync --extra dev
 uv run python -m splunk --input results/cert_errors.json
 
 # With standalone Ollama agent (requires --extra llm and Ollama running)
-uv run python -m splunk --input results/cert_errors.json --llm
+uv run python -m splunk --input results/cert_errors.json --investigate
 
 # Live query from Splunk
 uv run python -m splunk --live --spl "index=pki sourcetype=ocsp_error" --earliest -6h
@@ -111,9 +111,8 @@ Override cookie name via `SPLUNK_COOKIE_NAME` env var.
 | Var | Default | Purpose |
 |-----|---------|---------|
 | `SPLUNK_URL` | — | Splunk base URL (required) |
-| `SPLUNK_USE_LLM` | `false` | Set `true` to enable standalone Ollama agent (requires `--extra llm`) |
-| `SPLUNK_LLM_MODEL` | `qwen2.5:14b` | Ollama model (only used when `SPLUNK_USE_LLM=true`) |
-| `SPLUNK_AGENT_MAX_ITER` | `10` | ReAct loop cap (only used when `SPLUNK_USE_LLM=true`) |
+| `SPLUNK_LLM_MODEL` | `qwen2.5:14b` | Ollama model (only used with the `--investigate` flag, requires `--extra llm`) |
+| `SPLUNK_AGENT_MAX_ITER` | `10` | ReAct loop cap (only used with the `--investigate` flag) |
 | `SPLUNK_SPIKE_THRESHOLD` | `10` | Events/window to trigger spike |
 | `SPLUNK_SPIKE_WINDOW` | `60` | Spike detection window (seconds) |
 | `SPLUNK_SLOW_QUERY_THRESHOLD_MS` | `1000` | Duration (ms) above which an event is flagged as a slow query |

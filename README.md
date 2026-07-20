@@ -18,6 +18,8 @@ Splunk export (JSON/CSV)  ──or──  Splunk REST API
 
 The investigation loop is self-contained — `splunk__submit_report` returns `{status, findings, next}` and the agent loops on its own without external hooks.
 
+Copilot/Claude via MCP is the primary reasoning path — no Ollama required. For environments without either, `splunk/agent.py` provides an optional standalone LangGraph ReAct agent over Ollama, enabled via `uv run python -m splunk --input <file> --investigate` (requires `uv sync --extra llm` and a running Ollama instance; model configurable via `SPLUNK_LLM_MODEL`).
+
 ## Quick start
 
 ### 1. Install prerequisites
