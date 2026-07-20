@@ -8,7 +8,7 @@ You are helping a new team member get up and running with this repo. Walk them t
 
 ## What this repo does
 
-This is a local Splunk investigation stack. It ingests Splunk exports (JSON/CSV) or runs live SPL queries, runs deterministic detectors (spikes, cert anomalies, host rankings), and drives a multi-iteration investigation loop via MCP tools exposed to you (the Copilot agent).
+This is a local Splunk investigation stack. It ingests Splunk exports (JSON/CSV) or runs live SPL queries, runs deterministic detectors (spikes, patterns, cert anomalies, correlations, severity, host rankings, slow queries, rolling z-score numeric anomalies), and drives a multi-iteration investigation loop via MCP tools exposed to you (the Copilot agent).
 
 Everything runs on-device — no data leaves the machine.
 
@@ -46,7 +46,7 @@ Repeat this when your session expires (usually after 8–24 hours).
 splunk/
   config.py        — all tunables (thresholds, paths)
   parsers.py       — parse Splunk JSON/CSV exports → Polars DataFrame
-  detectors.py     — rule-based detectors (spikes, cert anomalies, rankings)
+  detectors.py     — rule-based detectors (spikes, cert anomalies, rankings, slow queries, numeric anomalies)
   investigator.py  — builds findings dict from DataFrame
   mcp_server.py    — FastMCP server: exposes investigation tools to Copilot
   runner.py        — CLI orchestrator (file or live mode)

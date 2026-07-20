@@ -14,6 +14,7 @@ Execute all investigation steps sequentially. Do not pause between iterations to
 | `splunk__pause` | Stop the loop after the current iteration |
 | `splunk__lsp_call_chain` | Trace a function/symbol through the microservice call graph to find which code path produced a log error |
 | `splunk__hint` | Inject an analyst hint that shapes the next iteration |
+| `splunk__query_examples` | Look up SPL queries from past investigations (optionally filtered by `area`) to ground follow-up queries in fields/patterns that have actually worked |
 
 ## Before you start
 
@@ -43,6 +44,7 @@ splunk__investigate_start(source="<file or spl>")
 - Write 1–3 follow-up SPL queries that can disprove or refine the hypothesis
   - Prefix each query with a `-- area: <label>` comment line
   - Keep queries grounded in fields and values present in the findings
+  - Optionally call `splunk__query_examples(area="<label>")` first to reuse SPL patterns that worked in past investigations
 
 ### Step 3 — Submit
 
