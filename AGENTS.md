@@ -36,7 +36,7 @@ splunk__investigate_start(source="<file or spl>")
 
 ### Step 2 — Reason
 
-- Read `findings`: spikes, patterns, cert anomalies, host rankings, timeline
+- Read `findings`: spikes, patterns, cert anomalies, correlations, severity breakdown, host rankings, slow queries, numeric anomalies (rolling z-score — check `window_contaminated` before treating consecutive flags as independent signal), timeline
 - If `repo_path` is set and findings contain error messages or function names, call `splunk__lsp_call_chain` to trace the log site back through the call graph — use the result to sharpen your hypothesis and queries
 - Form one falsifiable hypothesis about the root cause
 - Draft a short markdown report with `**Confidence:** Low | Medium | High`
