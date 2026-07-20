@@ -10,10 +10,9 @@ dependencies = [
     "polars",
     "fastapi",
     "uvicorn[standard]",
-    "jinja2",
     "python-multipart",
-    "markdown",
     "mcp[cli]>=1.28.1",
+    "textual",
 ]
 
 [project.optional-dependencies]

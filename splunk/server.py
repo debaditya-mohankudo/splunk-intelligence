@@ -1,27 +1,27 @@
-"""FastAPI server for the Splunk investigation UI."""
+"""FastAPI server for the Splunk investigation API. Consumed by the TUI (splunk/tui.py),
+MCP tools (mcp_server.py), and the REST/curl fallback documented in AGENTS.md."""
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 import uuid
-from pathlib import Path
 from typing import Any
 
 import polars as pl
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from splunk.ui.routes import ui_router
+app = FastAPI(title="Splunk Investigation API", docs_url=None, redoc_url=None)
 
-app = FastAPI(title="Splunk Investigation UI", docs_url=None, redoc_url=None)
+_CONFIDENCE_RE = re.compile(r"\*\*Confidence:\*\*\s*(High|Medium|Low)", re.IGNORECASE)
 
-# Static files
-_STATIC_DIR = Path(__file__).parent / "static"
-app.mount("/ui/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
-# UI router
-app.include_router(ui_router)
+def _extract_confidence(report_md: str) -> str:
+    m = _CONFIDENCE_RE.search(report_md or "")
+    return m.group(1) if m else "—"
+
 
 # ---------------------------------------------------------------------------
 # Shared live state
@@ -147,6 +147,71 @@ async def api_active_run():
     })
 
 
+@app.get("/api/runs")
+async def api_runs():
+    """List past runs (finished + in-progress reports), most recent first."""
+    from splunk.db import _connect
+
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT run_id, source_file, created_at, report_md FROM reports ORDER BY created_at DESC"
+        ).fetchall()
+
+    runs = [
+        {
+            "run_id": r["run_id"],
+            "source": r["source_file"] or "—",
+            "created_at": (r["created_at"] or "")[:16],
+            "confidence": _extract_confidence(r["report_md"] or ""),
+        }
+        for r in rows
+    ]
+    return JSONResponse({"runs": runs})
+
+
+@app.get("/api/runs/{run_id}")
+async def api_run_detail(run_id: str):
+    """Report + follow-up queries for a single run."""
+    from splunk.db import _connect, get_queries
+
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT run_id, source_file, created_at, report_md FROM reports WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()
+
+    if not row:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    return JSONResponse({
+        "run_id": run_id,
+        "source": row["source_file"] or "—",
+        "created_at": (row["created_at"] or "")[:16],
+        "confidence": _extract_confidence(row["report_md"] or ""),
+        "report_md": row["report_md"] or "",
+        "queries": get_queries(run_id),
+    })
+
+
+@app.get("/api/runs/{run_id}/stream")
+async def api_run_stream(run_id: str):
+    """SSE stream of live iteration events for a run."""
+    queue: asyncio.Queue = _sse_queues.setdefault(run_id, asyncio.Queue())
+
+    async def event_generator():
+        while True:
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=30)
+                if event is None:
+                    yield "event: done\ndata: {}\n\n"
+                    break
+                yield f"data: {json.dumps(event)}\n\n"
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
 @app.post("/api/investigate/start")
 async def api_investigate_start(req: InvestigateRequest):
     """Claude-session mode: load df, build initial findings, return them for Claude to reason over."""
@@ -184,7 +249,7 @@ async def api_investigate_start(req: InvestigateRequest):
         "run_id": run_id,
         "iteration": 0,
         "findings": json.loads(json.dumps(findings, default=str)),
-        "ui_url": f"http://127.0.0.1:8765/ui/runs/{run_id}",
+        "ui_url": f"Run: uv run python -m splunk.tui  (select run {run_id[:8]})",
     })
 
 
@@ -231,7 +296,7 @@ async def api_investigate_report(req: ReportRequest):
             "run_id": req.run_id,
             "confidence": confidence,
             "iterations": iteration,
-            "ui_url": f"http://127.0.0.1:8765/ui/runs/{req.run_id}",
+            "ui_url": f"Run: uv run python -m splunk.tui  (select run {req.run_id[:8]})",
         })
 
     # Execute follow-up queries → new findings
@@ -245,7 +310,7 @@ async def api_investigate_report(req: ReportRequest):
             "confidence": confidence,
             "iterations": iteration,
             "reason": "no new events from follow-up queries",
-            "ui_url": f"http://127.0.0.1:8765/ui/runs/{req.run_id}",
+            "ui_url": f"Run: uv run python -m splunk.tui  (select run {req.run_id[:8]})",
         })
 
     import polars as pl

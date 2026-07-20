@@ -61,17 +61,22 @@ uv run python -m splunk --live --spl "index=pki sourcetype=ocsp_error" --earlies
 
 ## Via AI agent (MCP tools)
 
-Run both servers — the FastAPI UI server and the MCP tool server:
+Run the API server and the MCP tool server:
 
 ```bash
-# Terminal 1 — FastAPI UI (http://127.0.0.1:8765)
+# Terminal 1 — FastAPI server (REST API only, no browser UI)
 ./serve.sh
 
 # Terminal 2 — MCP tool server
 uv run python -m splunk.mcp_server
+
+# Terminal 3 (optional) — terminal UI for watching live investigation progress
+uv run python -m splunk.tui
 ```
 
-The UI at `http://127.0.0.1:8765/ui/runs/<run_id>` shows live investigation progress, findings, and the final report. The MCP server exposes the investigation tools to the agent.
+The TUI shows past runs, live iteration/confidence for the in-progress run, the rendered report, and follow-up SPL queries — it talks to the same REST/SSE endpoints on `./serve.sh` that used to back a browser dashboard. It requires the API server to be running. The MCP server exposes the investigation tools to the agent.
+
+Note: live per-iteration updates in the TUI only reach investigations driven through the standalone `--investigate` agent path (which runs inside the API server process) — MCP/Claude-driven investigations run in a separate process and won't stream live updates into the TUI, though their finished reports still show up once complete (persisted to `splunk.db`).
 
 Then ask Copilot or Claude: *"Start a Splunk investigation on results/cert_errors.json"*
 

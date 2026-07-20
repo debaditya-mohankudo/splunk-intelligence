@@ -120,7 +120,7 @@ def splunk__investigate_start(
             "source": source_label,
             "event_count": findings["event_count"],
             "findings": json.loads(json.dumps(findings, default=str)),
-            "ui_url": f"http://127.0.0.1:8765/ui/runs/{run_id}",
+            "ui_url": f"Run: uv run python -m splunk.tui  (select run {run_id[:8]})",
             "next": "Reason over these findings and call splunk__submit_report with your report and follow-up SPL queries.",
         }
         if repo_path:
@@ -185,7 +185,7 @@ def splunk__submit_report(
             clear_active_run()
         except Exception:
             pass
-        ui_url = f"http://127.0.0.1:8765/ui/runs/{run_id}"
+        ui_url = f"Run: uv run python -m splunk.tui  (select run {run_id[:8]})"
         return json.dumps({
             "status": "done",
             "run_id": run_id,
@@ -214,7 +214,7 @@ def splunk__submit_report(
             clear_active_run()
         except Exception:
             pass
-        ui_url = f"http://127.0.0.1:8765/ui/runs/{run_id}"
+        ui_url = f"Run: uv run python -m splunk.tui  (select run {run_id[:8]})"
         return json.dumps({
             "status": "done",
             "run_id": run_id,
