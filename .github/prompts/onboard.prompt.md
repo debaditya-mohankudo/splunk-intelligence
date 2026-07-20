@@ -47,17 +47,19 @@ splunk/
   config.py        — all tunables (thresholds, paths)
   parsers.py       — parse Splunk JSON/CSV exports → Polars DataFrame
   detectors.py     — rule-based detectors (spikes, cert anomalies, rankings, slow queries, numeric anomalies)
-  investigator.py  — builds findings dict from DataFrame
+  investigator.py  — pure helpers: builds findings dict, executes follow-up SPL
+  connector.py     — facade: loading, run state, standalone agent loop, own CLI (no server process)
   mcp_server.py    — FastMCP server: exposes investigation tools to Copilot
+  tui.py           — terminal UI, reads splunk.db directly for history + live progress
   runner.py        — CLI orchestrator (file or live mode)
   client.py        — Splunk REST client
   auth.py          — Playwright SSO auth
-  server.py        — FastAPI UI server (optional)
-  db.py            — SQLite store (events, findings, reports, queries)
-  logger.py        — structured JSON-lines logging
+  db.py            — SQLite store (events, findings, reports, queries, active_runs)
+  logger.py        — structured JSON-lines logging (audit trail for every connector action)
 
 tests/
-  test_mcp_tools.py   — unit tests for all MCP tools (no Splunk needed)
+  test_mcp_tools.py   — unit tests for MCP tool wrappers (no Splunk needed)
+  test_connector.py   — unit tests for the connector facade (loading, detection, DB round-trip)
   fixtures/           — sample Splunk exports for tests
 
 reports/            — generated markdown reports (gitignored)
@@ -81,17 +83,17 @@ uv run python -m splunk --live --spl "index=pki sourcetype=ocsp_error" --earlies
 
 ### Via Copilot (MCP tools)
 
-Start both servers — the FastAPI UI and the MCP tool server:
+No server process needed — start the MCP tool server, and optionally the TUI:
 
 ```bash
-# Terminal 1 — FastAPI UI (http://127.0.0.1:8765)
-./serve.sh
-
-# Terminal 2 — MCP tool server
+# Terminal 1 — MCP tool server
 uv run python -m splunk.mcp_server
+
+# Terminal 2 (optional) — terminal UI for watching live investigation progress
+uv run python -m splunk.tui
 ```
 
-The UI at `http://127.0.0.1:8765/ui/runs/<run_id>` shows live investigation progress and the final report. The MCP server exposes investigation tools to Copilot.
+The TUI reads `splunk.db` directly (no HTTP) for run history, the rendered report, and live iteration/confidence progress. The MCP server exposes investigation tools to Copilot.
 
 Then ask Copilot: *"Start a Splunk investigation on results/cert_errors.json"*
 

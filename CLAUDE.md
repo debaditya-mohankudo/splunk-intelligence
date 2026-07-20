@@ -1,5 +1,8 @@
 # Splunk Intelligence — Investigation Stack
 
+## Project Planning
+use claude-hooks task framework
+
 ## Project Overview
 
 Python tool that ingests Splunk exports (JSON/CSV) or fetches live via REST, runs deterministic Polars-based parsers and detectors, then exposes structured findings to an AI agent (GitHub Copilot or Claude Code) via FastMCP tools. The agent handles all reasoning and drives the investigation loop. Everything runs on-device — no data leaves the machine.

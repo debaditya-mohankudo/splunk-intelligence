@@ -70,7 +70,7 @@ splunk__submit_report(
 - If findings are sparse, cap confidence at Medium and keep queries narrow — do not invent broader theories
 - Maximum 3 iterations (enforced server-side); do not loop past `status == "done"`
 
-## Done conditions (server-enforced)
+## Done conditions
 
 `submit_report` returns `status: "done"` when any of these are true:
 

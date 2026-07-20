@@ -2,17 +2,17 @@
 
 ## Setup
 
-Two processes run independently:
+One process, no server required:
 
 ```bash
-# Terminal 1 — Splunk UI + investigation server
-./serve.sh          # uvicorn splunk.server:app on port 8765
-
-# Terminal 2 — MCP tool server
+# MCP tool server
 uv run python -m splunk.mcp_server   # FastMCP on stdio
+
+# Optional — terminal UI for watching live progress (reads splunk.db directly)
+uv run python -m splunk.tui
 ```
 
-The MCP server registers 5 tools (`splunk__*`). Any MCP-compatible agent (Claude Code, GitHub Copilot, etc.) can drive the loop.
+The MCP server registers 7 tools (`splunk__*`). Any MCP-compatible agent (Claude Code, GitHub Copilot, etc.) can drive the loop. All tools are thin wrappers over `splunk/connector.py`, which owns loading data, running detectors, and persisting run state — no HTTP involved anywhere in this loop.
 
 ---
 
@@ -55,6 +55,15 @@ The loop is **self-contained**: all findings are returned directly in the tool r
 | `splunk__get_findings` | Read current findings mid-loop |
 | `splunk__pause` | Signal the loop to stop after current iteration |
 | `splunk__hint` | Inject an analyst hint for the next iteration |
+| `splunk__query_examples` | Look up past SPL queries to ground follow-up queries |
+| `splunk__lsp_call_chain` | Trace a symbol through a microservice's call graph (requires `repo_path`) |
+
+No MCP client available? The same operations are exposed as a CLI:
+
+```bash
+uv run python -m splunk.connector start --source results/x.json
+uv run python -m splunk.connector submit-report --run-id <id> --report "..." --queries "..."
+```
 
 ---
 
@@ -62,7 +71,8 @@ The loop is **self-contained**: all findings are returned directly in the tool r
 
 | File | Role |
 |------|------|
-| `splunk/mcp_server.py` | FastMCP server — all 5 tools |
-| `splunk/server.py` | FastAPI server — active run state, SSE queues, UI routes |
-| `splunk/investigator.py` | `_build_findings`, `_prepare_df`, `_execute_queries` |
+| `splunk/mcp_server.py` | FastMCP server — all 7 tools, thin wrappers over connector.py |
+| `splunk/connector.py` | Facade — loads data, runs detectors, persists run state to splunk.db, own CLI |
+| `splunk/investigator.py` | `_build_findings`, `_prepare_df`, `_execute_queries` (imported by connector.py) |
 | `splunk/client.py` | Executes follow-up SPL queries via Splunk REST API |
+| `splunk/tui.py` | Terminal UI — reads splunk.db directly for history + live `active_runs` state |

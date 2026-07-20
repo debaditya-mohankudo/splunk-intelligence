@@ -10,7 +10,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +17,7 @@ from typing import Any
 
 import polars as pl
 
+from splunk.connector import _load_from_file, _load_from_live
 from splunk.detectors import (
     correlate_events,
     detect_cert_anomalies,
@@ -34,8 +34,6 @@ from splunk.parsers import (
     build_timeline,
     extract_cert_fields,
     extract_timestamps,
-    parse_splunk_csv,
-    parse_splunk_json,
 )
 
 
@@ -120,23 +118,6 @@ def _findings_to_markdown(findings: dict[str, Any]) -> str:
 # I/O helpers
 # ---------------------------------------------------------------------------
 
-def _load_from_file(path: str) -> pl.DataFrame:
-    if path == "-":
-        raw = sys.stdin.read()
-    else:
-        raw = Path(path).read_text()
-
-    stripped = raw.lstrip()
-    if stripped.startswith("{") or stripped.startswith("["):
-        return parse_splunk_json(raw)
-    return parse_splunk_csv(raw)
-
-
-def _load_from_live(spl: str, earliest: str, latest: str) -> pl.DataFrame:
-    from splunk.client import run_query
-    return pl.DataFrame(run_query(spl, earliest=earliest, latest=latest))
-
-
 def _write_report(report: str, output_dir: str, input_name: str, log: RunLogger) -> Path:
     out = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
@@ -217,34 +198,11 @@ def main() -> None:
             return
 
         if args.investigate:
-            # Try delegating to the server if it's running
-            _server_accepted = False
-            try:
-                import requests as _req
-                payload = {"source": args.input} if not args.live else {"spl": args.spl, "earliest": args.earliest, "latest": args.latest}
-                resp = _req.post("http://127.0.0.1:8765/api/investigate", json=payload, timeout=3)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    print(f"Investigation started on server — run_id: {data['run_id']}")
-                    print("Watch at http://127.0.0.1:8765/ui/")
-                    _server_accepted = True
-            except Exception:
-                pass
+            from splunk.connector import run_standalone_agent
 
-            if _server_accepted:
-                log.info("run.complete", run_id=run_id)
-                print(f"[log] logs/{run_id}.jsonl")
-                return
-
-            # Fall back — run directly
-            from splunk.investigator import investigate
-            try:
-                from splunk.server import set_active_run
-                set_active_run(run_id, input_name)
-            except Exception:
-                pass
             log.info("investigator.start", source=input_name)
-            report, queries = investigate(df, run_id)
+            report, queries = run_standalone_agent(df, run_id, source=input_name)
+            print(f"Watch live progress: uv run python -m splunk.tui  (select run {run_id[:8]})")
             if queries:
                 print(f"\n--- Follow-up queries ({len(queries)}) ---")
                 for q in queries:

@@ -80,6 +80,18 @@ def init_db() -> None:
                 created_at  TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS active_runs (
+                run_id           TEXT PRIMARY KEY,
+                source           TEXT,
+                iteration        INTEGER NOT NULL DEFAULT 0,
+                confidence       TEXT,
+                events           INTEGER,
+                pause_requested  INTEGER NOT NULL DEFAULT 0,
+                hint             TEXT,
+                findings_json    TEXT,
+                updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_events_run      ON events(run_id);
             CREATE INDEX IF NOT EXISTS idx_findings_run    ON findings(run_id);
             CREATE INDEX IF NOT EXISTS idx_reports_run     ON reports(run_id);
@@ -218,6 +230,63 @@ def get_queries(run_id: str) -> list[dict]:
             (run_id,),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+_ACTIVE_RUN_FIELDS = {"source", "iteration", "confidence", "events", "pause_requested", "hint", "findings_json"}
+
+
+def upsert_active_run(run_id: str, **fields: Any) -> None:
+    """Insert or update a live-run status row. Cross-process substitute for the
+    old in-memory _active_run dict — any process can read current progress."""
+    fields = {k: v for k, v in fields.items() if k in _ACTIVE_RUN_FIELDS}
+    with _connect() as conn:
+        if not fields:
+            conn.execute(
+                "INSERT INTO active_runs (run_id) VALUES (?) "
+                "ON CONFLICT(run_id) DO UPDATE SET updated_at = datetime('now')",
+                (run_id,),
+            )
+            return
+        columns = ", ".join(fields.keys())
+        placeholders = ", ".join("?" for _ in fields)
+        updates = ", ".join(f"{k} = excluded.{k}" for k in fields.keys())
+        conn.execute(
+            f"""INSERT INTO active_runs (run_id, {columns})
+                VALUES (?, {placeholders})
+                ON CONFLICT(run_id) DO UPDATE SET
+                    {updates},
+                    updated_at = datetime('now')""",
+            (run_id, *fields.values()),
+        )
+    logger.debug("upsert_active_run: run_id=%s fields=%s", run_id, list(fields.keys()))
+
+
+def clear_active_run_row(run_id: str) -> None:
+    with _connect() as conn:
+        conn.execute("DELETE FROM active_runs WHERE run_id = ?", (run_id,))
+    logger.debug("clear_active_run_row: run_id=%s", run_id)
+
+
+def get_active_run_row(run_id: str | None = None) -> dict | None:
+    """With run_id: look up that row. Without: return the most-recently-updated
+    active run (used by the TUI's cockpit — this tool assumes one analyst at a time)."""
+    with _connect() as conn:
+        if run_id:
+            row = conn.execute("SELECT * FROM active_runs WHERE run_id = ?", (run_id,)).fetchone()
+        else:
+            row = conn.execute("SELECT * FROM active_runs ORDER BY updated_at DESC LIMIT 1").fetchone()
+    return dict(row) if row else None
+
+
+def pop_hint(run_id: str) -> str | None:
+    """Read the analyst hint for a run, then clear it — same pop semantics the
+    old in-memory _active_run dict had."""
+    with _connect() as conn:
+        row = conn.execute("SELECT hint FROM active_runs WHERE run_id = ?", (run_id,)).fetchone()
+        if row and row["hint"]:
+            conn.execute("UPDATE active_runs SET hint = NULL WHERE run_id = ?", (run_id,))
+            return row["hint"]
+    return None
 
 
 def query_events(run_id: str) -> pl.DataFrame:

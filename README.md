@@ -9,11 +9,16 @@ Splunk export (JSON/CSV)  ──or──  Splunk REST API
     └─> parsers.py        # Polars DataFrame: field extraction, timestamp normalisation
     └─> detectors.py      # rule-based: spikes, patterns, cert anomalies, correlations,
     │                     #   severity, host rankings, slow queries, numeric anomalies
+    └─> connector.py      # facade: loading, detection, run state — no HTTP, no server
+    │                     #   process; MCP tools, the TUI, runner.py, and its own CLI
+    │                     #   all call into it directly
     └─> mcp_server.py     # FastMCP: exposes investigation tools to Copilot / Claude
+    └─> tui.py            # terminal UI: run history + live progress, reads splunk.db directly
     └─> runner.py         # CLI orchestrator
     └─> reports/          # generated markdown reports
-    └─> logs/             # per-run JSONL structured logs
-    └─> splunk.db         # SQLite: events, findings, reports, queries per run_id
+    └─> logs/             # per-run JSONL structured logs (audit trail — every
+    │                     #   investigate/pause/hint/done action, not just the CLI pipeline)
+    └─> splunk.db         # SQLite: events, findings, reports, queries, active_runs per run_id
 ```
 
 The investigation loop is self-contained — `splunk__submit_report` returns `{status, findings, next}` and the agent loops on its own without external hooks.
@@ -61,26 +66,33 @@ uv run python -m splunk --live --spl "index=pki sourcetype=ocsp_error" --earlies
 
 ## Via AI agent (MCP tools)
 
-Run the API server and the MCP tool server:
+No server process required — start the MCP tool server, and optionally the TUI:
 
 ```bash
-# Terminal 1 — FastAPI server (REST API only, no browser UI)
-./serve.sh
-
-# Terminal 2 — MCP tool server
+# Terminal 1 — MCP tool server
 uv run python -m splunk.mcp_server
 
-# Terminal 3 (optional) — terminal UI for watching live investigation progress
+# Terminal 2 (optional) — terminal UI for watching live investigation progress
 uv run python -m splunk.tui
 ```
-
-The TUI shows past runs, live iteration/confidence for the in-progress run, the rendered report, and follow-up SPL queries — it talks to the same REST/SSE endpoints on `./serve.sh` that used to back a browser dashboard. It requires the API server to be running. The MCP server exposes the investigation tools to the agent.
-
-Note: live per-iteration updates in the TUI only reach investigations driven through the standalone `--investigate` agent path (which runs inside the API server process) — MCP/Claude-driven investigations run in a separate process and won't stream live updates into the TUI, though their finished reports still show up once complete (persisted to `splunk.db`).
 
 Then ask Copilot or Claude: *"Start a Splunk investigation on results/cert_errors.json"*
 
 The agent calls `splunk__investigate_start`, reasons over findings, and loops via `splunk__submit_report` until confident. See [AGENTS.md](AGENTS.md) for the full loop protocol.
+
+The TUI reads `splunk.db` directly for run history and the rendered report, and polls the `active_runs` table for live iteration/confidence/event-count every ~2s — no HTTP involved. Because every `connector` function writes to `active_runs` regardless of which process calls it, the TUI shows live per-iteration progress for **both** MCP/Claude-driven investigations and the standalone `--investigate` agent path — previously (before this design), MCP-driven progress was invisible to any other process since it only lived in an in-memory dict inside whichever process was running it.
+
+### No MCP client available? Use the connector CLI
+
+Same investigation engine, no MCP tool-calling required:
+
+```bash
+uv run python -m splunk.connector start --source results/cert_errors.json
+uv run python -m splunk.connector submit-report --run-id <id> --report "..." --queries "-- area\nindex=pki ..."
+uv run python -m splunk.connector get-findings --run-id <id>
+uv run python -m splunk.connector pause --run-id <id>
+uv run python -m splunk.connector hint --run-id <id> --text "focus on web-01 after 14:30 UTC"
+```
 
 ### Claude Code skills
 
@@ -118,12 +130,14 @@ Tests are fully deterministic — no Splunk connection, no server required. Fixt
 | `splunk/config.py` | All tunables — thresholds, paths, auth |
 | `splunk/parsers.py` | `parse_splunk_json` / `parse_splunk_csv` → `pl.DataFrame` |
 | `splunk/detectors.py` | `detect_spikes`, `detect_cert_anomalies`, `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies`, etc. |
-| `splunk/mcp_server.py` | FastMCP server — 7 investigation tools |
+| `splunk/connector.py` | Facade: loading, run state, standalone agent loop, `python -m splunk.connector` CLI |
+| `splunk/mcp_server.py` | FastMCP server — 7 investigation tools (thin wrappers over connector.py) |
+| `splunk/tui.py` | Terminal UI — `python -m splunk.tui`, reads `splunk.db` directly |
 | `splunk/runner.py` | CLI entry point |
 | `splunk/client.py` | Splunk REST client (cookie-based, SSO-compatible) |
 | `splunk/auth.py` | Playwright SSO — opens Chromium, saves cookie |
-| `splunk/db.py` | SQLite store: events, findings, reports, queries |
-| `splunk/logger.py` | Structured JSON-lines logging per run |
+| `splunk/db.py` | SQLite store: events, findings, reports, queries, active_runs |
+| `splunk/logger.py` | Structured JSON-lines logging per run — audit trail for every connector action |
 
 ## Environment variables
 
