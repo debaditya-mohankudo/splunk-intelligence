@@ -7,7 +7,8 @@ A local Splunk investigation stack that ingests exports (JSON/CSV) or runs live 
 ```text
 Splunk export (JSON/CSV)  ──or──  Splunk REST API
     └─> parsers.py        # Polars DataFrame: field extraction, timestamp normalisation
-    └─> detectors.py      # rule-based: spikes, cert anomalies, host rankings, timeline
+    └─> detectors.py      # rule-based: spikes, patterns, cert anomalies, correlations,
+    │                     #   severity, host rankings, slow queries, numeric anomalies
     └─> mcp_server.py     # FastMCP: exposes investigation tools to Copilot / Claude
     └─> runner.py         # CLI orchestrator
     └─> reports/          # generated markdown reports
@@ -74,6 +75,11 @@ Then ask Copilot or Claude: *"Start a Splunk investigation on results/cert_error
 
 The agent calls `splunk__investigate_start`, reasons over findings, and loops via `splunk__submit_report` until confident. See [AGENTS.md](AGENTS.md) for the full loop protocol.
 
+### Claude Code skills
+
+- `/splunk-analyze` — interactive front door; asks for the log file and whether a live SPL query is also needed, then hands off into the investigation loop
+- `/splunk-investigate <input>` — same loop, invoked directly with a file path or SPL query already in hand
+
 ## MCP Tools
 
 | Tool | Purpose |
@@ -84,6 +90,7 @@ The agent calls `splunk__investigate_start`, reasons over findings, and loops vi
 | `splunk__pause` | Stop the loop after the current iteration |
 | `splunk__hint` | Inject an analyst hint that shapes the next iteration |
 | `splunk__query_examples` | Return past SPL queries from `splunk.db` to ground follow-up queries |
+| `splunk__lsp_call_chain` | Trace a function/symbol through a microservice's call graph to find which code path produced a log error (requires `repo_path`) |
 
 ## Onboarding (new team members)
 
@@ -103,8 +110,8 @@ Tests are fully deterministic — no Splunk connection, no server required. Fixt
 | --- | --- |
 | `splunk/config.py` | All tunables — thresholds, paths, auth |
 | `splunk/parsers.py` | `parse_splunk_json` / `parse_splunk_csv` → `pl.DataFrame` |
-| `splunk/detectors.py` | `detect_spikes`, `detect_cert_anomalies`, `host_error_ranking`, etc. |
-| `splunk/mcp_server.py` | FastMCP server — 6 investigation tools |
+| `splunk/detectors.py` | `detect_spikes`, `detect_cert_anomalies`, `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies`, etc. |
+| `splunk/mcp_server.py` | FastMCP server — 7 investigation tools |
 | `splunk/runner.py` | CLI entry point |
 | `splunk/client.py` | Splunk REST client (cookie-based, SSO-compatible) |
 | `splunk/auth.py` | Playwright SSO — opens Chromium, saves cookie |
@@ -118,6 +125,9 @@ Tests are fully deterministic — no Splunk connection, no server required. Fixt
 | `SPLUNK_URL` | — | Splunk base URL (required for live queries) |
 | `SPLUNK_SPIKE_THRESHOLD` | `10` | Events/window to trigger a spike |
 | `SPLUNK_SPIKE_WINDOW` | `60` | Spike detection window (seconds) |
+| `SPLUNK_SLOW_QUERY_THRESHOLD_MS` | `1000` | Duration (ms) above which an event is flagged as a slow query |
+| `SPLUNK_ANOMALY_WINDOW` | `20` | Rolling window size (events) for z-score anomaly detection |
+| `SPLUNK_ANOMALY_Z_THRESHOLD` | `3.0` | \|z-score\| above which an event is flagged as a numeric anomaly |
 | `SPLUNK_COOKIE_NAME` | `splunkd_8089` | Splunk session cookie name |
 | `SPLUNK_AUTH_PATH` | `~/.splunk/auth.json` | Cookie persist path |
 | `LOG_LEVEL` | `DEBUG` | Log verbosity |
