@@ -56,7 +56,10 @@ def init_db() -> None:
                 run_id      TEXT NOT NULL,
                 created_at  TEXT NOT NULL DEFAULT (datetime('now')),
                 source_file TEXT,
-                report_md   TEXT
+                report_md   TEXT,
+                spl         TEXT,
+                earliest    TEXT,
+                latest      TEXT
             );
 
             CREATE TABLE IF NOT EXISTS sourcetype_schema (
@@ -98,6 +101,12 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_schema_stype    ON sourcetype_schema(sourcetype);
             CREATE INDEX IF NOT EXISTS idx_iquery_run      ON investigation_queries(run_id);
         """)
+        # Migration for databases created before spl/earliest/latest existed
+        # on reports — CREATE TABLE IF NOT EXISTS above only helps fresh DBs.
+        existing_cols = {row["name"] for row in conn.execute("PRAGMA table_info(reports)")}
+        for col in ("spl", "earliest", "latest"):
+            if col not in existing_cols:
+                conn.execute(f"ALTER TABLE reports ADD COLUMN {col} TEXT")
 
 
 def store_events(df: pl.DataFrame, run_id: str) -> int:
@@ -153,12 +162,23 @@ def store_findings(findings: dict[str, Any], run_id: str) -> None:
     logger.info("store_findings: inserted %d finding rows for run_id=%s", len(rows), run_id)
 
 
-def store_report(report_md: str, run_id: str, source_file: str = "") -> None:
-    """Persist the final markdown report."""
+def store_report(
+    report_md: str,
+    run_id: str,
+    source_file: str = "",
+    spl: str = "",
+    earliest: str = "",
+    latest: str = "",
+) -> None:
+    """Persist the final markdown report. spl/earliest/latest are the full,
+    untruncated live-query params (when this run came from a live SPL
+    search) — kept as a durable reference distinct from source_file, which
+    upstream callers may pass in truncated (e.g. "live: <spl[:60]>")."""
     with _connect() as conn:
         conn.execute(
-            "INSERT INTO reports (run_id, source_file, report_md) VALUES (?, ?, ?)",
-            (run_id, source_file, report_md),
+            "INSERT INTO reports (run_id, source_file, report_md, spl, earliest, latest) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (run_id, source_file, report_md, spl, earliest, latest),
         )
     logger.info("store_report: saved %d chars for run_id=%s", len(report_md), run_id)
 

@@ -405,7 +405,8 @@ class PrevRunsScreen(CustomScreen):
 
         with _connect() as conn:
             row = conn.execute(
-                "SELECT run_id, source_file, created_at, report_md FROM reports WHERE run_id = ?",
+                "SELECT run_id, source_file, created_at, report_md, spl, earliest, latest "
+                "FROM reports WHERE run_id = ?",
                 (run_id,),
             ).fetchone()
         if not row:
@@ -414,6 +415,9 @@ class PrevRunsScreen(CustomScreen):
             "run_id": run_id,
             "source": row["source_file"] or "—",
             "report_md": row["report_md"] or "",
+            "spl": row["spl"] or "",
+            "earliest": row["earliest"] or "",
+            "latest": row["latest"] or "",
             "queries": get_queries(run_id),
         }
 
@@ -440,7 +444,13 @@ class PrevRunsScreen(CustomScreen):
             return
 
         report = self.query_one("#report", Markdown)
-        await report.update(data.get("report_md") or "*No report yet.*")
+        body = data.get("report_md") or "*No report yet.*"
+        spl = data.get("spl")
+        if spl:
+            earliest = data.get("earliest") or "-24h"
+            latest = data.get("latest") or "now"
+            body = f"**Query:** `{spl}` (`{earliest}` to `{latest}`)\n\n---\n\n{body}"
+        await report.update(body)
 
         table = self.query_one("#queries", DataTable)
         table.clear()

@@ -154,6 +154,12 @@ def start_investigation(
             "iteration": 0,
             "confidence": "—",
             "source": source_label,
+            # Full, untruncated live-query params — source_label above is
+            # truncated to spl[:60] for display; these are kept as a
+            # durable reference for store_report (see db.py:store_report).
+            "spl": spl,
+            "earliest": earliest if spl else "",
+            "latest": latest if spl else "",
         }
         store_events(df, run_id)
         upsert_active_run(
@@ -198,7 +204,10 @@ def submit_report(run_id: str, report: str, queries: list[str] | None = None) ->
     confidence = "High" if _confidence_high(report) else "Medium"
     session["confidence"] = confidence
 
-    store_report(report, run_id, session.get("source", ""))
+    store_report(
+        report, run_id, session.get("source", ""),
+        spl=session.get("spl", ""), earliest=session.get("earliest", ""), latest=session.get("latest", ""),
+    )
     if queries:
         store_queries(run_id, iteration, queries)
 
@@ -377,7 +386,11 @@ def run_standalone_agent(df: pl.DataFrame, run_id: str, source: str = "") -> tup
             df = pl.concat([df, _prepare_df(new_df)], how="diagonal")
             log.debug("df.grown", events=df.height)
 
-    store_report(report, run_id, source)
+    session = _sessions.get(run_id) or {}
+    store_report(
+        report, run_id, source,
+        spl=session.get("spl", ""), earliest=session.get("earliest", ""), latest=session.get("latest", ""),
+    )
     clear_active_run_row(run_id)
     return report, all_queries
 
