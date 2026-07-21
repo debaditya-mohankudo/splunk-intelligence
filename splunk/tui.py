@@ -83,6 +83,39 @@ class Cockpit(CustomStatic):
     events: reactive[int | None] = reactive(None)
     paused: reactive[bool] = reactive(False)
 
+    def update_status(
+        self,
+        *,
+        run_id: str | None,
+        source: str = "",
+        iteration: int = 0,
+        confidence: str = "—",
+        events: int | None = None,
+        paused: bool = False,
+    ) -> None:
+        """Set all fields together and log the transition — the single
+        control point every call site should go through instead of
+        assigning reactive fields one at a time, mirroring StatusChip's
+        set_status(). Only logs when something actually changed, since
+        this is called once per POLL_INTERVAL tick regardless of whether
+        the underlying active-run row moved."""
+        changed = (
+            run_id != self.run_id or source != self.source or iteration != self.iteration
+            or confidence != self.confidence or events != self.events or paused != self.paused
+        )
+        self.run_id = run_id
+        self.source = source
+        self.iteration = iteration
+        self.confidence = confidence
+        self.events = events
+        self.paused = paused
+        if changed:
+            self._log(
+                "update_status",
+                run_id=run_id[:8] if run_id else None,
+                iteration=iteration, confidence=confidence, events=events, paused=paused,
+            )
+
     def render(self) -> str:
         if not self.run_id:
             return "[dim]No active investigation — press 'n' to start one[/]"
@@ -303,14 +336,16 @@ class HomeScreen(CustomScreen):
             row = await asyncio.to_thread(get_active_run_row)
             cockpit = self.query_one("#cockpit", Cockpit)
             if row is None:
-                cockpit.run_id = None
+                cockpit.update_status(run_id=None)
             else:
-                cockpit.run_id = row.get("run_id")
-                cockpit.source = row.get("source") or ""
-                cockpit.iteration = row.get("iteration", 0)
-                cockpit.confidence = row.get("confidence", "—")
-                cockpit.events = row.get("events")
-                cockpit.paused = bool(row.get("pause_requested"))
+                cockpit.update_status(
+                    run_id=row.get("run_id"),
+                    source=row.get("source") or "",
+                    iteration=row.get("iteration", 0),
+                    confidence=row.get("confidence", "—"),
+                    events=row.get("events"),
+                    paused=bool(row.get("pause_requested")),
+                )
             await asyncio.sleep(POLL_INTERVAL)
 
 
