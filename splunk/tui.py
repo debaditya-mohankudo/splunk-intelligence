@@ -213,6 +213,7 @@ class HomeScreen(CustomScreen):
         ("p", "toggle_pause", "Pause/Resume"),
         ("h", "focus_hint", "Hint"),
         ("c", "config", "Config"),
+        ("escape", "unfocus", "Unfocus"),
     ]
 
     def compose(self) -> ComposeResult:
@@ -265,6 +266,16 @@ class HomeScreen(CustomScreen):
 
     def action_focus_hint(self) -> None:
         self.query_one("#hint-input", Input).focus()
+
+    def action_unfocus(self) -> None:
+        """Escape out of the hint-input — without this, once it has focus
+        there is no way back to the nav-card key bindings (n/v/c/p all get
+        typed into the field instead), since Input has no built-in
+        escape-to-blur behavior. Mirrors docker_log_analyzer's
+        ConnectScreen.action_back_or_quit pattern."""
+        if self.focused is not None:
+            self._log("unfocus")
+            self.set_focus(None)
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "hint-input":
