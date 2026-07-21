@@ -12,7 +12,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
-from splunk.config import AUTH_JSON_PATH as AUTH_PATH, COOKIE_NAME, SPLUNK_URL
+from splunk import config
+from splunk.config import AUTH_JSON_PATH as AUTH_PATH, COOKIE_NAME
 
 load_dotenv()
 
@@ -24,7 +25,7 @@ def run_auth_flow() -> None:
     Open a visible browser, navigate to Splunk, wait for the user to complete
     SSO login, then extract and persist the session cookie.
     """
-    if not SPLUNK_URL:
+    if not config.SPLUNK_URL:
         raise ValueError("SPLUNK_URL is not set. Add it to .env or environment.")
 
     AUTH_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -34,8 +35,8 @@ def run_auth_flow() -> None:
         context = browser.new_context(ignore_https_errors=True)
         page = context.new_page()
 
-        logger.info("Opening Splunk at %s — complete SSO login in the browser window.", SPLUNK_URL)
-        page.goto(SPLUNK_URL)
+        logger.info("Opening Splunk at %s — complete SSO login in the browser window.", config.SPLUNK_URL)
+        page.goto(config.SPLUNK_URL)
 
         # Wait until the user lands on a Splunk page that has the session cookie.
         # We poll until the target cookie appears (up to 5 minutes).
@@ -87,7 +88,7 @@ def validate_session() -> bool:
         from splunk.client import _load_cookie, _session
         cookie = _load_cookie()
         session = _session(cookie)
-        resp = session.get(f"{SPLUNK_URL}/services/server/info", params={"output_mode": "json"})
+        resp = session.get(f"{config.SPLUNK_URL}/services/server/info", params={"output_mode": "json"})
         return resp.status_code == 200
     except Exception as exc:
         logger.debug("Session validation failed: %s", exc)

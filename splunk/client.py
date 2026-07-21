@@ -16,12 +16,12 @@ from typing import Any
 import requests
 from dotenv import load_dotenv
 
+from splunk import config
 from splunk.config import (
     AUTH_JSON_PATH as AUTH_PATH,
     MAX_REAUTH_ATTEMPTS,
     POLL_INTERVAL,
     POLL_TIMEOUT,
-    SPLUNK_URL,
 )
 from splunk.parsers import parse_splunk_json
 
@@ -78,7 +78,7 @@ def submit_query(spl: str, earliest: str = "-24h", latest: str = "now") -> str:
     logger.info("Submitting query earliest=%s latest=%s | %s", earliest, latest, spl[:120])
     cookie = _load_cookie()
     session = _session(cookie)
-    url = f"{SPLUNK_URL}/services/search/jobs"
+    url = f"{config.SPLUNK_URL}/services/search/jobs"
     payload = {
         "search": f"search {spl}" if not spl.strip().startswith("search") else spl,
         "earliest_time": earliest,
@@ -100,7 +100,7 @@ def poll_job(
     """Poll /services/search/jobs/{sid} until dispatchState=DONE or timeout."""
     cookie = _load_cookie()
     session = _session(cookie)
-    url = f"{SPLUNK_URL}/services/search/jobs/{sid}"
+    url = f"{config.SPLUNK_URL}/services/search/jobs/{sid}"
     deadline = time.monotonic() + timeout
 
     while time.monotonic() < deadline:
@@ -127,7 +127,7 @@ def fetch_results(sid: str, count: int = 0) -> str:
     logger.info("Fetching results for SID %s (count=%d)", sid, count)
     cookie = _load_cookie()
     session = _session(cookie)
-    url = f"{SPLUNK_URL}/services/search/jobs/{sid}/results"
+    url = f"{config.SPLUNK_URL}/services/search/jobs/{sid}/results"
     params = {"output_mode": "json", "count": count}
     resp = session.get(url, params=params)
     _check_response(resp)
@@ -145,7 +145,7 @@ def run_query(
     latest: str = "now",
 ) -> list[dict[str, Any]]:
     """Submit → poll → fetch → parse. Returns list of normalised event dicts."""
-    if not SPLUNK_URL:
+    if not config.SPLUNK_URL:
         raise SplunkAuthError("SPLUNK_URL is not set. Add it to .env or environment.")
 
     logger.info("run_query: spl=%s earliest=%s latest=%s", spl[:80], earliest, latest)

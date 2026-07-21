@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from pathlib import Path
 from typing import Any
 
 from textual.app import App, ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Container, Horizontal, Vertical
 from textual.reactive import reactive
 from textual.screen import Screen
 from textual.widgets import (
@@ -34,6 +35,10 @@ from textual.widgets import (
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL = 2.0
+
+# Home -> Flow -> Results, matching this app's actual screen flow
+# (DashboardScreen -> LaunchScreen(+picker/live-form) -> RunningScreen).
+STEP_NAMES = ["Home", "Flow", "Results"]
 
 _CONFIDENCE_RE = re.compile(r"\*\*Confidence:\*\*\s*(High|Medium|Low)", re.IGNORECASE)
 
@@ -89,6 +94,40 @@ class Cockpit(CustomStatic):
         )
 
 
+class BreadcrumbBar(Horizontal):
+    """"1 · Home > 2 · Flow > 3 · Results" stepper bar, current step
+    highlighted — mounted at the top of every screen via CustomScreen's
+    compose_head(step_index), mirroring docker_log_analyzer/tui.py's
+    BreadcrumbBar convention so both apps share the same house design."""
+
+    def __init__(self, current_index: int) -> None:
+        self._current_index = current_index
+        super().__init__(classes="breadcrumb-bar")
+
+    def compose(self) -> ComposeResult:
+        for i, name in enumerate(STEP_NAMES):
+            classes = "breadcrumb-chip active" if i == self._current_index else "breadcrumb-chip"
+            yield Static(f"{i + 1} · {name}", classes=classes)
+            if i < len(STEP_NAMES) - 1:
+                yield Static("›", classes="breadcrumb-sep")
+
+
+class ClickableCard(Container):
+    """A Container that also responds to a mouse click, running the same
+    action its key binding already triggers — every card is reachable by
+    key OR click, never click-only (no mouse-only Button widgets), mirroring
+    docker_log_analyzer/tui.py's ClickableCard."""
+
+    can_focus = True
+
+    def __init__(self, *children: Any, on_activate: Any, **kwargs: Any) -> None:
+        super().__init__(*children, **kwargs)
+        self._on_activate = on_activate
+
+    def on_click(self) -> None:
+        self._on_activate()
+
+
 class StatusChip(CustomStatic):
     """Reusable live status indicator — mirrors the docker-log-analyzer
     ConnectScreen convention: testing/success/failure, color-coded."""
@@ -131,8 +170,9 @@ class CustomScreen(Screen):
     def _log(self, event: str, **kwargs: object) -> None:
         _log_action(f"{type(self).__name__}.{event}", **kwargs)
 
-    def compose_head(self) -> ComposeResult:
+    def compose_head(self, step_index: int = 0) -> ComposeResult:
         yield Header()
+        yield BreadcrumbBar(step_index)
 
     def compose_foot(self) -> ComposeResult:
         yield Footer()
@@ -176,6 +216,7 @@ class DashboardScreen(CustomScreen):
         ("n", "new_investigation", "New investigation"),
         ("p", "toggle_pause", "Pause/Resume"),
         ("h", "focus_hint", "Hint"),
+        ("c", "config", "Config"),
         ("q", "quit", "Quit"),
     ]
 
@@ -184,7 +225,7 @@ class DashboardScreen(CustomScreen):
         self._selected_run_id: str | None = None
 
     def compose(self) -> ComposeResult:
-        yield from self.compose_head()
+        yield from self.compose_head(0)
         yield Cockpit(id="cockpit")
         with Horizontal(id="body"):
             with Vertical(id="sidebar"):
@@ -219,6 +260,10 @@ class DashboardScreen(CustomScreen):
     def action_new_investigation(self) -> None:
         self._log("new_investigation")
         self.app.push_screen(LaunchScreen())
+
+    def action_config(self) -> None:
+        self._log("config")
+        self.app.push_screen(ConfigScreen())
 
     def action_toggle_pause(self) -> None:
         cockpit = self.query_one("#cockpit", Cockpit)
@@ -371,15 +416,23 @@ class LaunchScreen(CustomScreen):
         ("escape", "app.pop_screen", "Back"),
     ]
 
+    CSS = """
+    #launch-choices { height: auto; margin-top: 1; }
+    """
+
     def compose(self) -> ComposeResult:
-        yield from self.compose_head()
-        yield Static(
-            "[bold]New Investigation[/]\n\n"
-            "  [bold]f[/]  Analyze a Splunk log file\n"
-            "  [bold]l[/]  Live analyze via Splunk SPL query\n\n"
-            "[dim]Esc to cancel[/]",
-            id="launch-menu",
-        )
+        yield from self.compose_head(1)
+        yield Label("New Investigation", classes="title")
+        yield Static("Pick how to feed this investigation.", classes="hint-bar")
+        with Horizontal(id="launch-choices"):
+            with ClickableCard(classes="launch-card", on_activate=self.action_analyze_file):
+                yield Static("📄", classes="launch-icon")
+                yield Label("(F) Analyze a log file", classes="launch-label")
+                yield Static("Load a Splunk .json/.csv export", classes="launch-hint")
+            with ClickableCard(classes="launch-card", on_activate=self.action_live_analyze):
+                yield Static("⚡", classes="launch-icon")
+                yield Label("(L) Live analyze", classes="launch-label")
+                yield Static("Run a live SPL query via Splunk", classes="launch-hint")
         yield from self.compose_foot()
 
     def action_analyze_file(self) -> None:
@@ -389,6 +442,86 @@ class LaunchScreen(CustomScreen):
     def action_live_analyze(self) -> None:
         self._log("live_analyze")
         self.app.push_screen(LiveAnalyzeScreen())
+
+
+class ConfigScreen(CustomScreen):
+    """Set SPLUNK_URL from inside the app instead of hand-editing .env —
+    reached via DashboardScreen's 'c' binding. Writes to .env (so it
+    survives a restart) AND mutates splunk.config.SPLUNK_URL + os.environ
+    directly so it takes effect for the rest of this session without one —
+    auth.py/client.py read config.SPLUNK_URL as a live module attribute
+    (not a frozen `from ... import SPLUNK_URL` binding) specifically so
+    this works."""
+
+    BINDINGS = [
+        ("s", "save", "Save"),
+        ("escape", "app.pop_screen", "Cancel"),
+    ]
+
+    CSS = """
+    #config-form { padding: 1 2; }
+    #config-form Input { margin-bottom: 1; }
+    #config-save-card {
+        width: auto; height: auto; margin-top: 1; padding: 0 2;
+        border: round $accent 50%; background: $panel;
+        align: center middle;
+    }
+    #config-save-card:focus, #config-save-card:hover { border: round $accent; }
+    #config-save-label { width: auto; text-style: bold; color: $accent; }
+    #config-status { margin-top: 1; }
+    """
+
+    def compose(self) -> ComposeResult:
+        from splunk import config
+
+        yield from self.compose_head(0)
+        with Vertical(id="config-form"):
+            yield Label("Splunk URL")
+            yield Input(
+                value=config.SPLUNK_URL,
+                placeholder="https://splunk.example.com:8089",
+                id="splunk-url-input",
+            )
+            with ClickableCard(id="config-save-card", on_activate=self.action_save):
+                yield Static("💾 Save (s)", id="config-save-label")
+            yield StatusChip("", id="config-status")
+        yield from self.compose_foot()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if event.input.id != "splunk-url-input":
+            return
+        self.action_save()
+
+    def action_save(self) -> None:
+        from splunk import config
+
+        url = self.query_one("#splunk-url-input", Input).value.strip().rstrip("/")
+        status = self.query_one("#config-status", StatusChip)
+        if not url:
+            status.set_status("failure", "SPLUNK_URL can't be empty.")
+            return
+
+        config.SPLUNK_URL = url
+        os.environ["SPLUNK_URL"] = url
+        self._write_env_var("SPLUNK_URL", url)
+        self._log("saved", splunk_url=url)
+        status.set_status("success", f"Saved — SPLUNK_URL={url}")
+
+    @staticmethod
+    def _write_env_var(key: str, value: str) -> None:
+        """Create/update a KEY=value line in .env, preserving every other
+        line untouched — same file client.py/auth.py's load_dotenv() reads
+        on the next run."""
+        env_path = Path.cwd() / ".env"
+        lines = env_path.read_text().splitlines() if env_path.exists() else []
+        prefix = f"{key}="
+        for i, line in enumerate(lines):
+            if line.startswith(prefix):
+                lines[i] = f"{key}={value}"
+                env_path.write_text("\n".join(lines) + "\n")
+                return
+        lines.append(f"{key}={value}")
+        env_path.write_text("\n".join(lines) + "\n")
 
 
 class FilePickerScreen(CustomScreen):
@@ -410,7 +543,7 @@ class FilePickerScreen(CustomScreen):
     """
 
     def compose(self) -> ComposeResult:
-        yield from self.compose_head()
+        yield from self.compose_head(1)
         yield StatusChip("Select a .json or .csv Splunk export", id="picker-status")
         yield DirectoryTree(str(Path.cwd()), id="file-tree")
         yield from self.compose_foot()
@@ -430,7 +563,10 @@ class LiveAnalyzeScreen(CustomScreen):
     a live SPL query has no file input; this goes straight to entering the
     query, then the Playwright SSO login (in RunningScreen)."""
 
-    BINDINGS = [("escape", "app.pop_screen", "Cancel")]
+    BINDINGS = [
+        ("r", "run", "Run"),
+        ("escape", "app.pop_screen", "Cancel"),
+    ]
 
     CSS = """
     #live-form {
@@ -439,10 +575,19 @@ class LiveAnalyzeScreen(CustomScreen):
     #live-form Input {
         margin-bottom: 1;
     }
+    #run-card {
+        width: auto; height: auto; margin-top: 1; padding: 0 2;
+        border: round $accent 50%; background: $panel;
+        align: center middle;
+    }
+    #run-card:focus, #run-card:hover {
+        border: round $accent;
+    }
+    #run-card-label { width: auto; text-style: bold; color: $accent; }
     """
 
     def compose(self) -> ComposeResult:
-        yield from self.compose_head()
+        yield from self.compose_head(1)
         with Vertical(id="live-form"):
             yield Label("SPL query")
             yield Input(placeholder="index=pki sourcetype=ocsp_error", id="spl-input")
@@ -450,17 +595,23 @@ class LiveAnalyzeScreen(CustomScreen):
             yield Input(placeholder="-24h", id="earliest-input")
             yield Label("Latest (default now)")
             yield Input(placeholder="now", id="latest-input")
+            with ClickableCard(id="run-card", on_activate=self.action_run):
+                yield Static("▶ Run Live Analysis (r)", id="run-card-label")
             yield Label(
-                "[dim]Enter in the SPL field to start — this triggers a Splunk SSO "
-                "login in a browser window if your session has expired.[/]"
+                "[dim]This triggers a Splunk SSO login in a browser window "
+                "if your session has expired.[/]"
             )
         yield from self.compose_foot()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
         if event.input.id != "spl-input":
             return
+        self.action_run()
+
+    def action_run(self) -> None:
         spl = self.query_one("#spl-input", Input).value.strip()
         if not spl:
+            self.query_one("#spl-input", Input).focus()
             return
         earliest = self.query_one("#earliest-input", Input).value.strip() or "-24h"
         latest = self.query_one("#latest-input", Input).value.strip() or "now"
@@ -492,7 +643,7 @@ class RunningScreen(CustomScreen):
         self._latest = latest
 
     def compose(self) -> ComposeResult:
-        yield from self.compose_head()
+        yield from self.compose_head(2)
         yield StatusChip("Starting…", id="run-status")
         yield from self.compose_foot()
 
@@ -592,6 +743,28 @@ class RunningScreen(CustomScreen):
 
 class SplunkTUI(App):
     """Textual front end for the Splunk investigation engine."""
+
+    # House design ported from Analyze_docker_logs_with_copilot/docker_log_analyzer/tui.py
+    # (breadcrumb-bar/chip and card tokens) so both TUIs share one visual language.
+    CSS = """
+    .title { text-style: bold; margin-bottom: 1; }
+    .hint-bar { height: auto; padding: 0 1; color: $text-muted; }
+
+    .breadcrumb-bar { height: auto; padding: 1 2; border-bottom: solid $accent 30%; align: left middle; }
+    .breadcrumb-chip { width: auto; height: 3; color: $text-muted; padding: 1 1; }
+    .breadcrumb-chip.active { color: $accent; text-style: bold; border: round $accent; padding: 0 1; }
+    .breadcrumb-sep { width: auto; height: 3; color: $text-muted; padding: 1 1; }
+
+    .launch-card {
+        width: 1fr; height: auto; margin-right: 2; padding: 1 2;
+        border: round $accent 50%; background: $panel;
+        align: center middle;
+    }
+    .launch-card:last-of-type { margin-right: 0; }
+    .launch-icon { text-align: center; width: 100%; color: $accent; margin-bottom: 1; }
+    .launch-label { text-style: bold; text-align: center; width: 100%; }
+    .launch-hint { color: $text-muted; text-align: center; width: 100%; }
+    """
 
     def on_mount(self) -> None:
         self.push_screen(DashboardScreen())
