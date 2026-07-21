@@ -37,7 +37,8 @@ logger = logging.getLogger(__name__)
 POLL_INTERVAL = 2.0
 
 # Home -> Flow -> Results, matching this app's actual screen flow
-# (DashboardScreen -> LaunchScreen(+picker/live-form) -> RunningScreen).
+# (HomeScreen -> LaunchScreen(+picker/live-form) -> RunningScreen ->
+# PrevRunsScreen).
 STEP_NAMES = ["Home", "Flow", "Results"]
 
 _CONFIDENCE_RE = re.compile(r"\*\*Confidence:\*\*\s*(High|Medium|Low)", re.IGNORECASE)
@@ -179,10 +180,10 @@ class CustomScreen(Screen):
 
 
 # ---------------------------------------------------------------------------
-# Dashboard — the default screen: run history, live cockpit, report detail
+# Home — lean landing screen: live cockpit + nav cards to the rest of the app
 # ---------------------------------------------------------------------------
 
-class DashboardScreen(CustomScreen):
+class HomeScreen(CustomScreen):
     CSS = """
     Cockpit {
         height: 3;
@@ -190,21 +191,16 @@ class DashboardScreen(CustomScreen):
         border: solid $accent;
         content-align: left middle;
     }
-    #body {
-        height: 1fr;
+    #home-nav { height: auto; margin-top: 1; }
+    .home-card {
+        width: 1fr; height: auto; margin-right: 2; padding: 1 2;
+        border: round $accent 50%; background: $panel;
+        align: center middle;
     }
-    #sidebar {
-        width: 40;
-        border: solid $panel;
-    }
-    #detail {
-        width: 1fr;
-        border: solid $panel;
-    }
-    #queries {
-        height: 10;
-        border: solid $panel;
-    }
+    .home-card:last-of-type { margin-right: 0; }
+    .home-card-icon { text-align: center; width: 100%; color: $accent; margin-bottom: 1; }
+    .home-card-label { text-style: bold; text-align: center; width: 100%; }
+    .home-card-hint { color: $text-muted; text-align: center; width: 100%; }
     #controls {
         height: 3;
         padding: 0 1;
@@ -212,40 +208,31 @@ class DashboardScreen(CustomScreen):
     """
 
     BINDINGS = [
-        ("r", "refresh", "Refresh"),
         ("n", "new_investigation", "New investigation"),
+        ("v", "prev_runs", "Prev runs"),
         ("p", "toggle_pause", "Pause/Resume"),
         ("h", "focus_hint", "Hint"),
         ("c", "config", "Config"),
-        ("q", "quit", "Quit"),
     ]
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._selected_run_id: str | None = None
 
     def compose(self) -> ComposeResult:
         yield from self.compose_head(0)
         yield Cockpit(id="cockpit")
-        with Horizontal(id="body"):
-            with Vertical(id="sidebar"):
-                yield DataTable(id="runs-table", cursor_type="row")
-            with Vertical(id="detail"):
-                yield Markdown("Select a run from the sidebar.", id="report")
-                yield DataTable(id="queries")
+        with Horizontal(id="home-nav"):
+            with ClickableCard(classes="home-card", on_activate=self.action_new_investigation):
+                yield Static("🔎", classes="home-card-icon")
+                yield Label("(N) New Investigation", classes="home-card-label")
+                yield Static("Start analyzing a file or live SPL query", classes="home-card-hint")
+            with ClickableCard(classes="home-card", on_activate=self.action_prev_runs):
+                yield Static("🗂", classes="home-card-icon")
+                yield Label("(V) Prev Runs", classes="home-card-label")
+                yield Static("Browse past investigation results", classes="home-card-hint")
         with Horizontal(id="controls"):
             yield Input(placeholder="inject analyst hint… (enter to send, 'h' to focus)", id="hint-input")
         yield from self.compose_foot()
 
     def on_mount(self) -> None:
-        runs_table = self.query_one("#runs-table", DataTable)
-        runs_table.add_columns("Run", "Source", "Confidence", "Created")
-
-        queries_table = self.query_one("#queries", DataTable)
-        queries_table.add_columns("Iter", "Area", "SPL", "Rows")
-
         self.run_worker(self._poll_active_run_loop(), thread=False, exclusive=True, name="poll-active")
-        self.action_refresh()
 
     # -----------------------------------------------------------------
     # Actions (key-bound — no Button widgets; the previous hint/pause
@@ -253,13 +240,13 @@ class DashboardScreen(CustomScreen):
     # expands to fill the whole #controls row and pushed them offscreen)
     # -----------------------------------------------------------------
 
-    def action_refresh(self) -> None:
-        self._log("refresh")
-        self.run_worker(self._load_runs(), thread=False, exclusive=False)
-
     def action_new_investigation(self) -> None:
         self._log("new_investigation")
         self.app.push_screen(LaunchScreen())
+
+    def action_prev_runs(self) -> None:
+        self._log("prev_runs")
+        self.app.push_screen(PrevRunsScreen())
 
     def action_config(self) -> None:
         self._log("config")
@@ -293,6 +280,91 @@ class DashboardScreen(CustomScreen):
                 asyncio.to_thread(connector.set_hint, run_id, hint), thread=False, exclusive=False,
             )
         event.input.value = ""
+
+    # -----------------------------------------------------------------
+    # Worker
+    # -----------------------------------------------------------------
+
+    async def _poll_active_run_loop(self) -> None:
+        from splunk.db import get_active_run_row
+
+        while True:
+            row = await asyncio.to_thread(get_active_run_row)
+            cockpit = self.query_one("#cockpit", Cockpit)
+            if row is None:
+                cockpit.run_id = None
+            else:
+                cockpit.run_id = row.get("run_id")
+                cockpit.source = row.get("source") or ""
+                cockpit.iteration = row.get("iteration", 0)
+                cockpit.confidence = row.get("confidence", "—")
+                cockpit.events = row.get("events")
+                cockpit.paused = bool(row.get("pause_requested"))
+            await asyncio.sleep(POLL_INTERVAL)
+
+
+# ---------------------------------------------------------------------------
+# Prev Runs — run history, report detail. Reached from Home's "Prev Runs"
+# nav card, not the app's root screen (see HomeScreen).
+# ---------------------------------------------------------------------------
+
+class PrevRunsScreen(CustomScreen):
+    CSS = """
+    #body {
+        height: 1fr;
+    }
+    #sidebar {
+        width: 40;
+        border: solid $panel;
+    }
+    #detail {
+        width: 1fr;
+        border: solid $panel;
+    }
+    #queries {
+        height: 10;
+        border: solid $panel;
+    }
+    """
+
+    BINDINGS = [
+        ("r", "refresh", "Refresh"),
+        ("escape", "app.pop_screen", "Back"),
+    ]
+
+    def __init__(self, initial_run_id: str | None = None) -> None:
+        super().__init__()
+        self._selected_run_id: str | None = None
+        self._initial_run_id = initial_run_id
+
+    def compose(self) -> ComposeResult:
+        yield from self.compose_head(2)
+        with Horizontal(id="body"):
+            with Vertical(id="sidebar"):
+                yield DataTable(id="runs-table", cursor_type="row")
+            with Vertical(id="detail"):
+                yield Markdown("Select a run from the sidebar.", id="report")
+                yield DataTable(id="queries")
+        yield from self.compose_foot()
+
+    def on_mount(self) -> None:
+        runs_table = self.query_one("#runs-table", DataTable)
+        runs_table.add_columns("Run", "Source", "Confidence", "Created")
+
+        queries_table = self.query_one("#queries", DataTable)
+        queries_table.add_columns("Iter", "Area", "SPL", "Rows")
+
+        self.action_refresh()
+        if self._initial_run_id:
+            self.run_worker(self._load_run_detail(self._initial_run_id), thread=False, exclusive=False)
+
+    # -----------------------------------------------------------------
+    # Actions
+    # -----------------------------------------------------------------
+
+    def action_refresh(self) -> None:
+        self._log("refresh")
+        self.run_worker(self._load_runs(), thread=False, exclusive=False)
 
     # -----------------------------------------------------------------
     # DB reads (sync sqlite calls, run in a thread so the UI stays responsive)
@@ -365,31 +437,6 @@ class DashboardScreen(CustomScreen):
             spl = (q.get("spl") or "")[:80]
             table.add_row(str(q.get("iteration")), q.get("area") or "", spl, str(q.get("result_rows")))
 
-    async def _poll_active_run_loop(self) -> None:
-        from splunk.db import get_active_run_row
-
-        last_run_id: str | None = None
-        while True:
-            row = await asyncio.to_thread(get_active_run_row)
-            cockpit = self.query_one("#cockpit", Cockpit)
-            if row is None:
-                cockpit.run_id = None
-            else:
-                cockpit.run_id = row.get("run_id")
-                cockpit.source = row.get("source") or ""
-                cockpit.iteration = row.get("iteration", 0)
-                cockpit.confidence = row.get("confidence", "—")
-                cockpit.events = row.get("events")
-                cockpit.paused = bool(row.get("pause_requested"))
-
-            # A run just finished (had an active row last tick, gone now) —
-            # refresh the sidebar so it shows up in history immediately.
-            if last_run_id and (row is None or row.get("run_id") != last_run_id):
-                self.run_worker(self._load_runs(), thread=False, exclusive=False)
-            last_run_id = row.get("run_id") if row else None
-
-            await asyncio.sleep(POLL_INTERVAL)
-
     # -----------------------------------------------------------------
     # Event handlers
     # -----------------------------------------------------------------
@@ -446,7 +493,7 @@ class LaunchScreen(CustomScreen):
 
 class ConfigScreen(CustomScreen):
     """Set SPLUNK_URL from inside the app instead of hand-editing .env —
-    reached via DashboardScreen's 'c' binding. Writes to .env (so it
+    reached via HomeScreen's 'c' binding. Writes to .env (so it
     survives a restart) AND mutates splunk.config.SPLUNK_URL + os.environ
     directly so it takes effect for the rest of this session without one —
     auth.py/client.py read config.SPLUNK_URL as a live module attribute
@@ -717,12 +764,15 @@ class RunningScreen(CustomScreen):
         status.set_status("success", f"Done — {n} follow-up quer{'y' if n == 1 else 'ies'} generated")
 
         await asyncio.sleep(1.5)
-        while len(self.app.screen_stack) > 2:
+        # Pop all the way back to Home regardless of which flow got here
+        # (Home->Launch->Picker/Live->Running is 4 deep; Home->Launch->Live
+        # is also possible) — "pop until len==2" previously left an
+        # intermediate screen on top for the 4-deep case, so the isinstance
+        # check below it could never fire. Push a fresh PrevRunsScreen
+        # instead of relying on whatever's left on the stack.
+        while len(self.app.screen_stack) > 1:
             self.app.pop_screen()
-        dashboard = self.app.screen
-        if isinstance(dashboard, DashboardScreen):
-            dashboard.run_worker(dashboard._load_runs(), thread=False, exclusive=False)
-            dashboard.run_worker(dashboard._load_run_detail(run_id), thread=False, exclusive=False)
+        self.app.push_screen(PrevRunsScreen(initial_run_id=run_id))
 
     @staticmethod
     def _validate_session() -> bool:
@@ -743,6 +793,12 @@ class RunningScreen(CustomScreen):
 
 class SplunkTUI(App):
     """Textual front end for the Splunk investigation engine."""
+
+    # 'q' must live on the App, not a Screen — a Screen-level Binding whose
+    # action isn't defined on that Screen does NOT reliably bubble up to
+    # App.action_quit (confirmed: it silently no-ops with a DataTable
+    # focused). Screens should never bind "quit" themselves.
+    BINDINGS = [("q", "quit", "Quit")]
 
     # House design ported from Analyze_docker_logs_with_copilot/docker_log_analyzer/tui.py
     # (breadcrumb-bar/chip and card tokens) so both TUIs share one visual language.
@@ -767,7 +823,7 @@ class SplunkTUI(App):
     """
 
     def on_mount(self) -> None:
-        self.push_screen(DashboardScreen())
+        self.push_screen(HomeScreen())
 
 
 def main() -> None:
