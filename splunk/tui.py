@@ -492,13 +492,13 @@ class LaunchScreen(CustomScreen):
 
 
 class ConfigScreen(CustomScreen):
-    """Set SPLUNK_URL from inside the app instead of hand-editing .env —
-    reached via HomeScreen's 'c' binding. Writes to .env (so it
-    survives a restart) AND mutates splunk.config.SPLUNK_URL + os.environ
-    directly so it takes effect for the rest of this session without one —
-    auth.py/client.py read config.SPLUNK_URL as a live module attribute
-    (not a frozen `from ... import SPLUNK_URL` binding) specifically so
-    this works."""
+    """Set SPLUNK_URL and SPLUNK_LLM_MODEL from inside the app instead of
+    hand-editing .env — reached via HomeScreen's 'c' binding. Writes to
+    .env (so it survives a restart) AND mutates splunk.config.SPLUNK_URL /
+    config.LLM_MODEL + os.environ directly so it takes effect for the rest
+    of this session without one — auth.py/client.py/agent.py read these as
+    live module attributes (not frozen `from ... import X` bindings)
+    specifically so this works."""
 
     BINDINGS = [
         ("s", "save", "Save"),
@@ -529,13 +529,19 @@ class ConfigScreen(CustomScreen):
                 placeholder="https://splunk.example.com:8089",
                 id="splunk-url-input",
             )
+            yield Label("Ollama model (standalone --investigate agent)")
+            yield Input(
+                value=config.LLM_MODEL,
+                placeholder="qwen2.5:14b",
+                id="llm-model-input",
+            )
             with ClickableCard(id="config-save-card", on_activate=self.action_save):
                 yield Static("💾 Save (s)", id="config-save-label")
             yield StatusChip("", id="config-status")
         yield from self.compose_foot()
 
     def on_input_submitted(self, event: Input.Submitted) -> None:
-        if event.input.id != "splunk-url-input":
+        if event.input.id not in ("splunk-url-input", "llm-model-input"):
             return
         self.action_save()
 
@@ -543,16 +549,25 @@ class ConfigScreen(CustomScreen):
         from splunk import config
 
         url = self.query_one("#splunk-url-input", Input).value.strip().rstrip("/")
+        model = self.query_one("#llm-model-input", Input).value.strip()
         status = self.query_one("#config-status", StatusChip)
         if not url:
             status.set_status("failure", "SPLUNK_URL can't be empty.")
+            return
+        if not model:
+            status.set_status("failure", "Ollama model can't be empty.")
             return
 
         config.SPLUNK_URL = url
         os.environ["SPLUNK_URL"] = url
         self._write_env_var("SPLUNK_URL", url)
-        self._log("saved", splunk_url=url)
-        status.set_status("success", f"Saved — SPLUNK_URL={url}")
+
+        config.LLM_MODEL = model
+        os.environ["SPLUNK_LLM_MODEL"] = model
+        self._write_env_var("SPLUNK_LLM_MODEL", model)
+
+        self._log("saved", splunk_url=url, llm_model=model)
+        status.set_status("success", f"Saved — SPLUNK_URL={url}, SPLUNK_LLM_MODEL={model}")
 
     @staticmethod
     def _write_env_var(key: str, value: str) -> None:

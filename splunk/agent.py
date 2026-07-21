@@ -20,7 +20,8 @@ from typing_extensions import TypedDict
 
 from dotenv import load_dotenv
 
-from splunk.config import AGENT_MAX_ITER as MAX_ITERATIONS, LLM_MODEL as MODEL, SPLUNK_INDEX
+from splunk import config
+from splunk.config import AGENT_MAX_ITER as MAX_ITERATIONS, SPLUNK_INDEX
 
 load_dotenv()
 
@@ -272,7 +273,7 @@ def _check_ollama_model(model: str) -> None:
 def agent_node(state: LogAnalysisState) -> dict:
     iteration = state.get("iterations", 0) + 1
     logger.debug("Agent iteration %d/%d", iteration, MAX_ITERATIONS)
-    llm = ChatOllama(model=MODEL, temperature=0).bind_tools(TOOLS)
+    llm = ChatOllama(model=config.LLM_MODEL, temperature=0).bind_tools(TOOLS)
     response = llm.invoke(state["messages"])
     tool_calls = getattr(response, "tool_calls", [])
     logger.debug("Iteration %d — tool_calls: %s", iteration, [t["name"] for t in tool_calls])
@@ -335,7 +336,7 @@ _graph = None
 def _get_graph() -> Any:
     global _graph
     if _graph is None:
-        _check_ollama_model(MODEL)
+        _check_ollama_model(config.LLM_MODEL)
         _graph = _build_graph()
     return _graph
 
@@ -351,7 +352,7 @@ def analyse(findings: dict[str, Any]) -> tuple[str, list[str]]:
     """
     logger.info(
         "Starting agent analysis — model=%s max_iter=%d event_count=%d",
-        MODEL, MAX_ITERATIONS, findings.get("event_count", 0),
+        config.LLM_MODEL, MAX_ITERATIONS, findings.get("event_count", 0),
     )
     graph = _get_graph()
     findings_str = json.dumps(findings, default=str, indent=2)
