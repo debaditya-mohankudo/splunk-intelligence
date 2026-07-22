@@ -124,6 +124,10 @@ Override cookie name via `SPLUNK_COOKIE_NAME` env var.
 | `SPLUNK_COOKIE_NAME` | `splunkd_8089` | Splunk session cookie name |
 | `SPLUNK_AUTH_PATH` | `~/.splunk/auth.json` | Cookie persist path |
 | `LOG_LEVEL` | `DEBUG` | Logging verbosity |
+| `SPLUNK_WATCH_SPL` | — | SPL query the watcher (`splunk/watcher.py`) polls on a loop |
+| `SPLUNK_WATCH_INTERVAL` | `60` | Seconds between watcher poll cycles |
+| `SPLUNK_WATCH_LOOKBACK` | `-15m` | Earliest time for the watcher's first cycle (no bookmark yet) |
+| `SPLUNK_WATCH_OVERLAP` | `30` | Seconds subtracted from the bookmark each cycle so boundary-straddling events aren't missed |
 
 ## Task backlog
 

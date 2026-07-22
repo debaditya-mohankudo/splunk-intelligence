@@ -21,7 +21,7 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from splunk import connector
+from splunk import connector, db
 
 mcp = FastMCP(
     name="splunk",
@@ -259,6 +259,32 @@ def splunk__hint(run_id: str, hint: str) -> str:
     Example: "focus on web-01 cert chain errors after 14:30 UTC"
     """
     return json.dumps(connector.set_hint(run_id, hint))
+
+
+@mcp.tool()
+def splunk__check_alerts(severity: str = "") -> str:
+    """
+    Read unacknowledged alerts written by the standalone watcher (splunk/watcher.py),
+    which polls Splunk continuously and independently of any agent session.
+
+    Args:
+        severity: Optional filter — "critical", "warning", or "info". Empty = all severities.
+
+    Returns JSON list of alerts (most recent first), each with id, run_id, ts, severity,
+    summary, and detail (the full detector hit). Call splunk__ack_alert on each id you've
+    acted on — alerts are never auto-acknowledged.
+    """
+    alerts = db.get_alerts(acked=False, severity=severity or None)
+    for a in alerts:
+        a["detail"] = json.loads(a.pop("detail_json"))
+    return json.dumps(alerts)
+
+
+@mcp.tool()
+def splunk__ack_alert(alert_id: int) -> str:
+    """Mark a watcher alert as acknowledged so it no longer appears in splunk__check_alerts."""
+    db.ack_alert(alert_id)
+    return json.dumps({"status": "ok"})
 
 
 # ---------------------------------------------------------------------------

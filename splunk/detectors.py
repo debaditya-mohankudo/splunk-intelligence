@@ -17,6 +17,7 @@ from splunk.config import ANOMALY_Z_THRESHOLD as _DEFAULT_ANOMALY_Z_THRESHOLD
 from splunk.config import CERT_ANOMALY_KEYWORDS as _DEFAULT_CERT_KEYWORDS
 from splunk.config import DURATION_FIELDS as _DURATION_FIELDS
 from splunk.config import SLOW_QUERY_THRESHOLD_MS as _DEFAULT_SLOW_QUERY_THRESHOLD_MS
+from splunk.config import STATUS_CODE_FIELDS as _STATUS_CODE_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -328,6 +329,48 @@ def detect_slow_queries(
 
     logger.info("detect_slow_queries: %d event(s) exceeded %dms (slowest=%.1fms)",
                 len(results), threshold_ms, results[0]["duration_ms"])
+    return results
+
+
+# ---------------------------------------------------------------------------
+# HTTP status errors (4xx/5xx)
+# ---------------------------------------------------------------------------
+
+def detect_http_errors(df: pl.DataFrame) -> list[dict]:
+    """Return events with a 4xx or 5xx HTTP status code, sorted worst-class first."""
+    logger.debug("detect_http_errors: events=%d", df.height)
+    if df.is_empty():
+        logger.debug("detect_http_errors: skipped — empty DataFrame")
+        return []
+
+    status_col = next((c for c in _STATUS_CODE_FIELDS if c in df.columns), None)
+    if not status_col:
+        logger.debug("detect_http_errors: skipped — no status field found (checked %s)", _STATUS_CODE_FIELDS)
+        return []
+
+    coded = df.with_columns(pl.col(status_col).cast(pl.Int64, strict=False).alias("_status"))
+    errors = coded.filter(pl.col("_status") >= 400).sort("_status", descending=True)
+    if errors.is_empty():
+        logger.info("detect_http_errors: no 4xx/5xx events found")
+        return []
+
+    host_col = next((c for c in ("host", "src", "hostname") if c in errors.columns), None)
+    path_col = next((c for c in ("uri", "url", "path", "endpoint") if c in errors.columns), None)
+    time_col = "time" if "time" in errors.columns else None
+
+    results = []
+    for row in errors.to_dicts():
+        status = int(row["_status"])
+        entry = {"status_code": status, "class": "5xx" if status >= 500 else "4xx", "field": status_col}
+        if host_col:
+            entry["host"] = row[host_col]
+        if path_col:
+            entry["path"] = str(row[path_col])[:200]
+        if time_col and row[time_col] is not None:
+            entry["time"] = row[time_col].isoformat()
+        results.append(entry)
+
+    logger.info("detect_http_errors: %d event(s) with 4xx/5xx status", len(results))
     return results
 
 

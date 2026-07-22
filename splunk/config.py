@@ -48,6 +48,11 @@ DURATION_FIELDS: list[str] = [
     "response_time", "run_time", "query_time", "latency", "latency_ms",
 ]
 
+# Candidate field names for HTTP status code, checked in order.
+STATUS_CODE_FIELDS: list[str] = [
+    "status", "status_code", "http_status", "response_code", "statuscode",
+]
+
 ANOMALY_ROLLING_WINDOW: int = int(os.environ.get("SPLUNK_ANOMALY_WINDOW", "20"))
 ANOMALY_Z_THRESHOLD: float = float(os.environ.get("SPLUNK_ANOMALY_Z_THRESHOLD", "3.0"))
 
@@ -74,3 +79,12 @@ SPLUNK_URL: str = os.environ.get("SPLUNK_URL", "").rstrip("/")
 POLL_INTERVAL: int = int(os.environ.get("SPLUNK_POLL_INTERVAL", "2"))
 POLL_TIMEOUT: int = int(os.environ.get("SPLUNK_POLL_TIMEOUT", "300"))
 MAX_REAUTH_ATTEMPTS: int = int(os.environ.get("SPLUNK_MAX_REAUTH", "3"))
+
+# ---------------------------------------------------------------------------
+# Watcher (splunk/watcher.py) — standalone continuous-monitoring process
+# ---------------------------------------------------------------------------
+
+WATCH_SPL: str = os.environ.get("SPLUNK_WATCH_SPL", "")
+WATCH_INTERVAL: int = int(os.environ.get("SPLUNK_WATCH_INTERVAL", "60"))
+WATCH_LOOKBACK: str = os.environ.get("SPLUNK_WATCH_LOOKBACK", "-15m")
+WATCH_OVERLAP: int = int(os.environ.get("SPLUNK_WATCH_OVERLAP", "30"))

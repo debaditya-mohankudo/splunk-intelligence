@@ -95,11 +95,28 @@ def init_db() -> None:
                 updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
+            CREATE TABLE IF NOT EXISTS alerts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id      TEXT NOT NULL,
+                ts          TEXT NOT NULL DEFAULT (datetime('now')),
+                severity    TEXT,
+                summary     TEXT,
+                detail_json TEXT,
+                acked       INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS watcher_state (
+                id          INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                last_time   TEXT,
+                updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+
             CREATE INDEX IF NOT EXISTS idx_events_run      ON events(run_id);
             CREATE INDEX IF NOT EXISTS idx_findings_run    ON findings(run_id);
             CREATE INDEX IF NOT EXISTS idx_reports_run     ON reports(run_id);
             CREATE INDEX IF NOT EXISTS idx_schema_stype    ON sourcetype_schema(sourcetype);
             CREATE INDEX IF NOT EXISTS idx_iquery_run      ON investigation_queries(run_id);
+            CREATE INDEX IF NOT EXISTS idx_alerts_acked    ON alerts(acked);
         """)
         # Migration for databases created before spl/earliest/latest existed
         # on reports — CREATE TABLE IF NOT EXISTS above only helps fresh DBs.
@@ -318,3 +335,67 @@ def query_events(run_id: str) -> pl.DataFrame:
     if not rows:
         return pl.DataFrame()
     return pl.DataFrame([dict(r) for r in rows])
+
+
+# ---------------------------------------------------------------------------
+# Watcher — alerts + bookmark (splunk/watcher.py, splunk__check_alerts)
+# ---------------------------------------------------------------------------
+
+def get_watch_bookmark() -> str | None:
+    """Return the watcher's last-seen _time, or None if it has never run."""
+    with _connect() as conn:
+        row = conn.execute("SELECT last_time FROM watcher_state WHERE id = 1").fetchone()
+    return row["last_time"] if row else None
+
+
+def set_watch_bookmark(last_time: str) -> None:
+    """Persist the watcher's last-seen _time so a restart resumes from here."""
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO watcher_state (id, last_time) VALUES (1, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   last_time  = excluded.last_time,
+                   updated_at = datetime('now')""",
+            (last_time,),
+        )
+    logger.debug("set_watch_bookmark: last_time=%s", last_time)
+
+
+def store_alerts(hits: list[dict[str, Any]], run_id: str) -> None:
+    """Persist detector hits from a watcher cycle as alert rows.
+    Each hit must carry a 'severity' and 'summary' key (assigned by the caller);
+    the full hit dict is kept in detail_json for splunk__check_alerts."""
+    import json
+
+    rows = [
+        (run_id, hit.get("severity") or "warning", hit.get("summary") or "", json.dumps(hit, default=str))
+        for hit in hits
+    ]
+    if not rows:
+        return
+    with _connect() as conn:
+        conn.executemany(
+            "INSERT INTO alerts (run_id, severity, summary, detail_json) VALUES (?, ?, ?, ?)",
+            rows,
+        )
+    logger.info("store_alerts: inserted %d alert(s) for run_id=%s", len(rows), run_id)
+
+
+def get_alerts(acked: bool = False, severity: str | None = None) -> list[dict]:
+    """Return alert rows, most recent first. acked=False (default) returns only unacked rows."""
+    query = "SELECT * FROM alerts WHERE acked = ?"
+    params: list[Any] = [int(acked)]
+    if severity:
+        query += " AND severity = ?"
+        params.append(severity)
+    query += " ORDER BY ts DESC"
+    with _connect() as conn:
+        rows = conn.execute(query, params).fetchall()
+    return [dict(r) for r in rows]
+
+
+def ack_alert(alert_id: int) -> None:
+    """Mark an alert as acknowledged."""
+    with _connect() as conn:
+        conn.execute("UPDATE alerts SET acked = 1 WHERE id = ?", (alert_id,))
+    logger.debug("ack_alert: id=%d", alert_id)
