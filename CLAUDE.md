@@ -14,13 +14,20 @@ Ollama is **not required** for the primary path. The optional `--investigate` fl
 ```
 Splunk export (JSON/CSV)  ──or──  Splunk REST API (via auth.py + client.py)
     └─> splunk/parsers.py       # Polars DataFrame: field extraction, timestamp normalisation, timeline
-    └─> splunk/detectors.py     # rule-based detection: spikes, patterns, cert anomalies, host ranking
+    └─> splunk/detectors.py     # rule-based detection: spikes, patterns, cert anomalies, host ranking, HTTP errors
     └─> splunk/mcp_server.py    # FastMCP tools — Copilot/Claude drives the investigation loop
     └─> splunk/agent.py         # optional: LangGraph ReAct via Ollama (--investigate flag only)
     └─> splunk/runner.py        # CLI orchestrator — wires everything, emits run_id
     └─> reports/<stem>_<ts>.md  # markdown investigation report
     └─> logs/<run_id>.jsonl     # structured JSON-lines log per run
-    └─> splunk.db               # SQLite: events, findings, reports keyed by run_id
+    └─> splunk.db               # SQLite: events, findings, reports, alerts keyed by run_id
+
+splunk/watcher.py               # standalone process (python -m splunk.watcher) —
+    └─> polls Splunk on an interval, runs detectors on each new slice,
+        writes hits to splunk.db's alerts table. Independent of any agent
+        session — Copilot has no self-scheduling mechanism to drive this
+        loop itself. splunk__check_alerts / splunk__ack_alert (mcp_server.py)
+        are how the agent consumes its output.
 ```
 
 ## Stack
@@ -64,13 +71,14 @@ uv run python -m splunk.auth
 |------|---------|
 | `splunk/config.py` | All tunables — cert fields, keywords, thresholds, auth paths, model name |
 | `splunk/parsers.py` | `parse_splunk_json` / `parse_splunk_csv` → `pl.DataFrame`; timestamp, cert, timeline transforms |
-| `splunk/detectors.py` | `detect_spikes`, `detect_patterns`, `detect_cert_anomalies`, `correlate_events`, `severity_summary`, `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies` |
+| `splunk/detectors.py` | `detect_spikes`, `detect_patterns`, `detect_cert_anomalies`, `correlate_events`, `severity_summary`, `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies`, `detect_http_errors` |
 | `splunk/agent.py` | LangGraph ReAct graph, 4 tools, `analyse(findings) -> str` |
 | `splunk/client.py` | `run_query(spl)` → submit → poll → fetch → parse |
 | `splunk/auth.py` | Playwright SSO, extracts cookie → `~/.splunk/auth.json` |
 | `splunk/runner.py` | CLI entry point, `run_pipeline(df)`, `RunLogger`, DB store |
 | `splunk/logger.py` | `RunLogger` — JSON-lines to `logs/<run_id>.jsonl`, default DEBUG |
-| `splunk/db.py` | SQLite store: `init_db`, `store_events`, `store_findings`, `store_report` |
+| `splunk/db.py` | SQLite store: `init_db`, `store_events`, `store_findings`, `store_report`, `store_alerts`, `get_alerts`, `ack_alert`, `get_watch_bookmark`/`set_watch_bookmark` |
+| `splunk/watcher.py` | Standalone `python -m splunk.watcher` process — polls Splunk on an interval, runs detectors on each new slice, writes hits to the `alerts` table. Exists because Copilot has no self-scheduling mechanism to drive polling itself. |
 
 ## Code conventions
 

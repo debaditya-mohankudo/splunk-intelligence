@@ -15,6 +15,8 @@ Execute all investigation steps sequentially. Do not pause between iterations to
 | `splunk__lsp_call_chain` | Trace a function/symbol through the microservice call graph to find which code path produced a log error |
 | `splunk__hint` | Inject an analyst hint that shapes the next iteration |
 | `splunk__query_examples` | Look up SPL queries from past investigations (optionally filtered by `area`) to ground follow-up queries in fields/patterns that have actually worked |
+| `splunk__check_alerts` | Read unacknowledged alerts written by the standalone watcher (`splunk/watcher.py`), optionally filtered by `severity` (`critical`/`warning`/`info`) |
+| `splunk__ack_alert` | Acknowledge an alert by `id` so it stops appearing in `splunk__check_alerts` |
 
 ## Before you start
 
@@ -78,6 +80,17 @@ splunk__submit_report(
 - Iteration count reaches `SPLUNK_INVESTIGATOR_MAX_ITER` (default 3)
 - No follow-up queries were provided
 - Follow-up queries return no new events
+
+## Continuous monitoring (watcher alerts)
+
+You have no self-scheduling mechanism, so continuous Splunk monitoring does not run in your loop — it runs as a separate standalone process (`uv run python -m splunk.watcher`, started outside this conversation) that polls Splunk on an interval and writes alerts to `splunk.db`.
+
+Call `splunk__check_alerts` when the user asks about live/ongoing issues, or periodically during a session if the watcher is known to be running. For each unacked alert:
+- Read `severity`, `summary`, and `detail` (the full detector hit — includes `duration_ms`/`status_code`/etc. depending on `detector` type: `slow_query`, `spike`, `pattern`, `cert_anomaly`, `http_error`)
+- If it warrants investigation, treat it as a lead into a normal `splunk__investigate_start` loop
+- Call `splunk__ack_alert(alert_id)` once you've surfaced or acted on it — alerts are never auto-acknowledged
+
+If the user asks for continuous monitoring and the watcher isn't running, tell them to start it themselves (`uv run python -m splunk.watcher`, requires `SPLUNK_WATCH_SPL` set) — you cannot start a long-running background process on their behalf.
 
 ## Authentication (live queries only)
 
