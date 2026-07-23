@@ -36,6 +36,7 @@ def init_db() -> None:
                 host        TEXT,
                 sourcetype  TEXT,
                 source      TEXT,
+                app         TEXT,
                 _time       TEXT,
                 _raw        TEXT,
                 extra_json  TEXT
@@ -125,12 +126,17 @@ def init_db() -> None:
             if col not in existing_cols:
                 conn.execute(f"ALTER TABLE reports ADD COLUMN {col} TEXT")
 
+        # Migration for databases created before app existed on events.
+        existing_event_cols = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
+        if "app" not in existing_event_cols:
+            conn.execute("ALTER TABLE events ADD COLUMN app TEXT")
+
 
 def store_events(df: pl.DataFrame, run_id: str) -> int:
     """Persist a parsed events DataFrame. Returns row count inserted."""
     import json
 
-    known = {"host", "sourcetype", "source", "_time", "_raw"}
+    known = {"host", "sourcetype", "source", "app", "_time", "_raw"}
     rows = []
     for ev in df.to_dicts():
         extra = {k: v for k, v in ev.items() if k not in known}
@@ -139,6 +145,7 @@ def store_events(df: pl.DataFrame, run_id: str) -> int:
             str(ev.get("host") or ""),
             str(ev.get("sourcetype") or ""),
             str(ev.get("source") or ""),
+            str(ev.get("app") or ""),
             str(ev.get("_time") or ""),
             str(ev.get("_raw") or ""),
             json.dumps(extra, default=str),
@@ -146,8 +153,8 @@ def store_events(df: pl.DataFrame, run_id: str) -> int:
 
     with _connect() as conn:
         conn.executemany(
-            "INSERT INTO events (run_id, host, sourcetype, source, _time, _raw, extra_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO events (run_id, host, sourcetype, source, app, _time, _raw, extra_json) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             rows,
         )
     logger.info("store_events: inserted %d rows for run_id=%s", len(rows), run_id)
