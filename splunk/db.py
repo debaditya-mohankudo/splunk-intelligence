@@ -265,6 +265,73 @@ def store_queries(run_id: str, iteration: int, query_blocks: list[str], result_r
     logger.info("store_queries: saved %d queries for run_id=%s iteration=%d", len(rows), run_id, iteration)
 
 
+def get_query_examples(
+    area: str = "",
+    limit: int = 20,
+    sort: str = "recent",
+) -> tuple[list[dict], dict[str, dict]]:
+    """
+    Return past SPL queries plus per-area effectiveness stats.
+
+    sort: "recent" orders by rowid desc (most recently stored first).
+          "effective" orders executed queries by result_rows desc (nulls/
+          unexecuted last), so patterns that actually returned data surface
+          first.
+
+    Returns (examples, area_stats) where area_stats maps area -> {
+        executed_count, avg_result_rows, median_result_rows
+    } computed over all matching rows (not just the returned page).
+    """
+    where = "WHERE area = ?" if area else ""
+    params: tuple = (area,) if area else ()
+
+    if sort == "effective":
+        order = "ORDER BY (result_rows IS NULL) ASC, result_rows DESC, rowid DESC"
+    else:
+        order = "ORDER BY rowid DESC"
+
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT area, spl, result_rows, run_id, iteration "
+            f"FROM investigation_queries {where} {order} LIMIT ?",
+            (*params, limit),
+        ).fetchall()
+
+        stats_where = f"{where} AND executed = 1" if where else "WHERE executed = 1"
+        stat_rows = conn.execute(
+            f"SELECT area, result_rows FROM investigation_queries {stats_where}",
+            params,
+        ).fetchall()
+
+    examples = [
+        {"area": r[0], "spl": r[1], "result_rows": r[2], "run_id": r[3], "iteration": r[4]}
+        for r in rows
+    ]
+
+    by_area: dict[str, list[int]] = {}
+    for r in stat_rows:
+        a = r[0] or ""
+        if r[1] is not None:
+            by_area.setdefault(a, []).append(r[1])
+
+    area_stats: dict[str, dict] = {}
+    for a, values in by_area.items():
+        values_sorted = sorted(values)
+        n = len(values_sorted)
+        median = (
+            values_sorted[n // 2]
+            if n % 2 == 1
+            else (values_sorted[n // 2 - 1] + values_sorted[n // 2]) / 2
+        )
+        area_stats[a] = {
+            "executed_count": n,
+            "avg_result_rows": sum(values_sorted) / n,
+            "median_result_rows": median,
+        }
+
+    return examples, area_stats
+
+
 def get_queries(run_id: str) -> list[dict]:
     """Return all investigation queries for a run, ordered by iteration."""
     with _connect() as conn:

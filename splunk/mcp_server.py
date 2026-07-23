@@ -102,7 +102,7 @@ def splunk__pause(run_id: str) -> str:
 
 
 @mcp.tool()
-def splunk__query_examples(area: str = "", limit: int = 20) -> str:
+def splunk__query_examples(area: str = "", limit: int = 20, sort: str = "recent") -> str:
     """
     Return example SPL queries from past investigations stored in splunk.db.
     Use this to ground follow-up queries in field names and patterns that have
@@ -111,34 +111,23 @@ def splunk__query_examples(area: str = "", limit: int = 20) -> str:
     Args:
         area:  Filter by area label (e.g. "tls", "cert", "auth"). Empty = all areas.
         limit: Max number of examples to return (default 20).
+        sort:  "recent" (default) orders by most recently stored first.
+               "effective" orders executed queries by result_rows descending
+               (queries that returned more data surface first; unexecuted/null
+               queries are ordered last) — use this to find SPL patterns that
+               have actually worked, not just what was tried most recently.
 
-    Returns JSON list of {area, spl, result_rows, run_id, iteration} sorted by
-    most recent first. result_rows is the event count the query returned, or null
-    if it was never executed.
+    Returns JSON {examples, count, area_stats}. Each example is
+    {area, spl, result_rows, run_id, iteration}; result_rows is the event
+    count the query returned, or null if it was never executed. area_stats
+    maps area -> {executed_count, avg_result_rows, median_result_rows},
+    computed over all matching history (not just the returned page), so you
+    can tell which areas reliably return data.
     """
     try:
-        from splunk.db import _connect
-        with _connect() as conn:
-            if area:
-                rows = conn.execute(
-                    "SELECT area, spl, result_rows, run_id, iteration "
-                    "FROM investigation_queries "
-                    "WHERE area = ? "
-                    "ORDER BY rowid DESC LIMIT ?",
-                    (area, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT area, spl, result_rows, run_id, iteration "
-                    "FROM investigation_queries "
-                    "ORDER BY rowid DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
-        examples = [
-            {"area": r[0], "spl": r[1], "result_rows": r[2], "run_id": r[3], "iteration": r[4]}
-            for r in rows
-        ]
-        return json.dumps({"examples": examples, "count": len(examples)})
+        from splunk.db import get_query_examples
+        examples, area_stats = get_query_examples(area=area, limit=limit, sort=sort)
+        return json.dumps({"examples": examples, "count": len(examples), "area_stats": area_stats})
     except Exception as exc:
         return json.dumps({"error": str(exc)})
 
