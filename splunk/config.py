@@ -42,6 +42,25 @@ SPIKE_THRESHOLD: int = int(os.environ.get("SPLUNK_SPIKE_THRESHOLD", "10"))
 CORRELATE_WINDOW_SECONDS: int = int(os.environ.get("SPLUNK_CORRELATE_WINDOW", "60"))
 SLOW_QUERY_THRESHOLD_MS: int = int(os.environ.get("SPLUNK_SLOW_QUERY_THRESHOLD_MS", "1000"))
 
+# Entity-keyed event-pair patterns for detect_event_pairs — each entry flags
+# entity_field values where a first_pattern event precedes a second_pattern
+# event (matched as lowercase substrings of _raw) within maxspan_seconds.
+# Analogous to Splunk's `transaction <entity> maxspan=<n> startswith=<a> endswith=<b>`.
+CORRELATE_PAIR_PATTERNS: list[dict] = [
+    {
+        "entity_field": "host",
+        "first_pattern": "ocsp",
+        "second_pattern": "handshake failed",
+        "maxspan_seconds": 3600,
+    },
+    {
+        "entity_field": "host",
+        "first_pattern": "crl",
+        "second_pattern": "handshake failed",
+        "maxspan_seconds": 3600,
+    },
+]
+
 # Candidate field names for query/request duration, checked in order.
 DURATION_FIELDS: list[str] = [
     "duration_ms", "duration", "elapsed", "elapsed_ms",

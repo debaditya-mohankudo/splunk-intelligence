@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import polars as pl
 
-from splunk.detectors import detect_numeric_anomalies, detect_slow_queries
+from splunk.detectors import detect_event_pairs, detect_numeric_anomalies, detect_slow_queries
 
 
 def test_detect_slow_queries_finds_events_over_threshold():
@@ -73,6 +73,64 @@ def test_detect_numeric_anomalies_no_numeric_field_returns_empty():
         "message": ["x"] * 30,
     })
     assert detect_numeric_anomalies(df) == []
+
+
+def _raw_df(entries: list[tuple[str, str, float]]) -> pl.DataFrame:
+    """entries: list of (host, _raw, offset_seconds_from_base)."""
+    base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    return pl.DataFrame({
+        "host": [e[0] for e in entries],
+        "_raw": [e[1] for e in entries],
+        "time": [base + timedelta(seconds=e[2]) for e in entries],
+    })
+
+
+def test_detect_event_pairs_finds_pair_within_span():
+    df = _raw_df([
+        ("host-a", "OCSP validation failed", 0),
+        ("host-b", "unrelated noise event", 5),
+        ("host-a", "TLS handshake failed", 30),
+    ])
+    result = detect_event_pairs(df, "host", "ocsp", "handshake failed", maxspan_seconds=60)
+    assert len(result) == 1
+    assert result[0]["entity"] == "host-a"
+    assert result[0]["span_seconds"] == 30
+
+
+def test_detect_event_pairs_ignores_reversed_order():
+    df = _raw_df([
+        ("host-a", "TLS handshake failed", 0),
+        ("host-a", "OCSP validation failed", 30),
+    ])
+    result = detect_event_pairs(df, "host", "ocsp", "handshake failed", maxspan_seconds=60)
+    assert result == []
+
+
+def test_detect_event_pairs_ignores_out_of_span():
+    df = _raw_df([
+        ("host-a", "OCSP validation failed", 0),
+        ("host-a", "TLS handshake failed", 120),
+    ])
+    result = detect_event_pairs(df, "host", "ocsp", "handshake failed", maxspan_seconds=60)
+    assert result == []
+
+
+def test_detect_event_pairs_ignores_cross_entity_noise():
+    df = _raw_df([
+        ("host-a", "OCSP validation failed", 0),
+        ("host-b", "TLS handshake failed", 10),
+    ])
+    result = detect_event_pairs(df, "host", "ocsp", "handshake failed", maxspan_seconds=60)
+    assert result == []
+
+
+def test_detect_event_pairs_missing_columns_returns_empty():
+    df = pl.DataFrame({"host": ["a"], "message": ["no raw or time here"]})
+    assert detect_event_pairs(df, "host", "ocsp", "handshake failed") == []
+
+
+def test_detect_event_pairs_empty_df_returns_empty():
+    assert detect_event_pairs(pl.DataFrame(), "host", "ocsp", "handshake failed") == []
 
 
 def test_detect_numeric_anomalies_tags_window_contamination(caplog):

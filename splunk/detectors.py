@@ -15,6 +15,7 @@ from splunk.config import ANOMALY_NUMERIC_FIELDS as _ANOMALY_NUMERIC_FIELDS
 from splunk.config import ANOMALY_ROLLING_WINDOW as _DEFAULT_ANOMALY_WINDOW
 from splunk.config import ANOMALY_Z_THRESHOLD as _DEFAULT_ANOMALY_Z_THRESHOLD
 from splunk.config import CERT_ANOMALY_KEYWORDS as _DEFAULT_CERT_KEYWORDS
+from splunk.config import CORRELATE_PAIR_PATTERNS as _DEFAULT_PAIR_PATTERNS
 from splunk.config import DURATION_FIELDS as _DURATION_FIELDS
 from splunk.config import SLOW_QUERY_THRESHOLD_MS as _DEFAULT_SLOW_QUERY_THRESHOLD_MS
 from splunk.config import STATUS_CODE_FIELDS as _STATUS_CODE_FIELDS
@@ -168,6 +169,95 @@ def correlate_events(df: pl.DataFrame, window_seconds: int = 60) -> list[dict]:
     ]
     logger.info("correlate_events: found %d cascading group(s)", len(result))
     return result
+
+
+# ---------------------------------------------------------------------------
+# Entity-keyed event-pair correlation
+# ---------------------------------------------------------------------------
+
+def detect_event_pairs(
+    df: pl.DataFrame,
+    entity_field: str,
+    first_pattern: str,
+    second_pattern: str,
+    maxspan_seconds: int = 3600,
+) -> list[dict]:
+    """
+    For each entity_field value, flag the first case where an event matching
+    first_pattern (lowercase substring of _raw) is followed by one matching
+    second_pattern within maxspan_seconds. Analogous to Splunk's
+    `transaction <entity_field> maxspan=<n> startswith=<a> endswith=<b>`.
+
+    Reports at most one pair per entity — the earliest qualifying first_pattern
+    hit paired with the earliest qualifying second_pattern hit after it.
+    """
+    logger.debug(
+        "detect_event_pairs: entity_field=%s first=%r second=%r maxspan=%ds events=%d",
+        entity_field, first_pattern, second_pattern, maxspan_seconds, df.height,
+    )
+    if "time" not in df.columns or "_raw" not in df.columns or entity_field not in df.columns:
+        logger.debug("detect_event_pairs: skipped — missing 'time', '_raw', or entity_field=%s", entity_field)
+        return []
+    if df.is_empty():
+        return []
+
+    first_kw = first_pattern.lower()
+    second_kw = second_pattern.lower()
+
+    timed = df.filter(pl.col("time").is_not_null()).sort("time")
+    if timed.is_empty():
+        return []
+
+    results = []
+    for entity, group in timed.group_by(entity_field, maintain_order=True):
+        entity_val = entity[0] if isinstance(entity, tuple) else entity
+        rows = group.to_dicts()
+        first_hit = None
+        for row in rows:
+            raw = str(row.get("_raw") or "").lower()
+            if first_hit is None:
+                if first_kw in raw:
+                    first_hit = row
+                continue
+            gap = (row["time"] - first_hit["time"]).total_seconds()
+            if gap > maxspan_seconds:
+                break
+            if second_kw in raw:
+                results.append({
+                    "entity_field": entity_field,
+                    "entity": str(entity_val),
+                    "first_pattern": first_pattern,
+                    "second_pattern": second_pattern,
+                    "first_time": first_hit["time"].isoformat(),
+                    "second_time": row["time"].isoformat(),
+                    "span_seconds": gap,
+                    "first_raw_excerpt": str(first_hit.get("_raw") or "")[:120],
+                    "second_raw_excerpt": str(row.get("_raw") or "")[:120],
+                })
+                break
+
+    results.sort(key=lambda r: r["first_time"])
+    logger.info(
+        "detect_event_pairs: found %d pair(s) for %s->%s", len(results), first_pattern, second_pattern,
+    )
+    return results
+
+
+def detect_event_pair_patterns(
+    df: pl.DataFrame,
+    patterns: list[dict] | None = None,
+) -> list[dict]:
+    """Run detect_event_pairs over every configured pattern (config.CORRELATE_PAIR_PATTERNS by default)."""
+    findings = []
+    for pattern in (patterns or _DEFAULT_PAIR_PATTERNS):
+        findings.extend(detect_event_pairs(
+            df,
+            entity_field=pattern["entity_field"],
+            first_pattern=pattern["first_pattern"],
+            second_pattern=pattern["second_pattern"],
+            maxspan_seconds=pattern.get("maxspan_seconds", 3600),
+        ))
+    return findings
 
 
 # ---------------------------------------------------------------------------
