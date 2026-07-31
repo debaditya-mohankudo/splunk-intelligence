@@ -27,8 +27,12 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a senior security engineer specialising in PKI and certificate infrastructure.
-You are given structured findings extracted from Splunk logs — spikes, error patterns, cert anomalies, host rankings, and event correlations.
+SYSTEM_PROMPT = """You are a senior site reliability / security engineer investigating an incident from Splunk log data.
+You are given structured findings extracted from Splunk logs — frequency spikes, repeating error patterns,
+cert/PKI anomalies, entity-keyed event-pair correlations, host error rankings, slow queries, HTTP errors,
+numeric anomalies, and severity/timeline summaries. Not every investigation will have every finding type —
+reason only over what's actually present in the data, whatever domain it comes from (PKI, web traffic,
+application errors, infrastructure metrics, etc.).
 
 Your job:
 1. Reason over the findings to identify the most likely root cause.
@@ -114,13 +118,12 @@ def request_deeper_analysis(area: str) -> str:
     """
     Signal that a specific area needs deeper investigation.
     Returns a prompt for the agent to focus its next reasoning step.
-    area: one of 'cert_chain', 'ocsp', 'crl', 'tls_handshake', 'host_isolation', 'timeline'
+    area: one of 'api_errors', 'database_slowdown', 'cascading_failure', 'host_isolation', 'timeline'
     """
     prompts = {
-        "cert_chain": "Focus on chain validation errors — look for patterns across hosts and timestamps.",
-        "ocsp": "Examine OCSP timeout/failure patterns — check if failures are clustered by time or host.",
-        "crl": "Review CRL distribution point failures — may indicate network connectivity to CA.",
-        "tls_handshake": "Analyse TLS handshake failures — correlate with cert expiry or cipher mismatch.",
+        "api_errors": "Examine 4xx/5xx HTTP error spikes — check if failures cluster by endpoint, status code, or host.",
+        "database_slowdown": "Analyse slow queries and elevated latency — correlate with specific hosts, endpoints, or time windows.",
+        "cascading_failure": "Look for an entity-keyed chain of failures (e.g. one service's error preceding another's on the same host) — build a dependency timeline of what failed first.",
         "host_isolation": "Determine if errors are isolated to specific hosts or widespread — check host_ranking.",
         "timeline": "Build a precise timeline of first occurrence vs escalation — use correlations data.",
     }
@@ -170,16 +173,23 @@ _SPL_TEMPLATES: dict[str, str] = {
         "index={index} host IN ({hosts}) earliest={spike_start} latest=+2h"
         " | stats count by host, sourcetype, error_code | sort -count"
     ),
-    "ocsp": (
-        "index=network dest_port=80 OR dest_port=2560 src IN ({hosts})"
-        " earliest={spike_start_minus5m} latest={spike_start_plus30m}"
-        " | timechart count by src"
-    ),
-    "crl": (
-        "index=network dest_port=80 src IN ({hosts})"
+    "api_errors": (
+        "index={index} sourcetype={sourcetype} host IN ({hosts}) status>=400"
         " earliest={spike_start} latest=+1h"
-        " | search url=*crl* OR url=*revocation*"
-        " | stats count by src, dest, url"
+        " | stats count by host, status, uri | sort -count"
+    ),
+    "database_slowdown": (
+        "index={index} sourcetype={sourcetype} host IN ({hosts})"
+        " earliest={spike_start} latest=+1h"
+        " | where duration_ms > 1000"
+        " | stats avg(duration_ms) as avg_ms, max(duration_ms) as max_ms, count by host"
+        " | sort -max_ms"
+    ),
+    "cascading_failure": (
+        "index={index} host IN ({hosts})"
+        " earliest={spike_start_minus5m} latest={spike_start_plus30m}"
+        " | transaction host maxspan=1h"
+        " | table _time, host, duration, eventcount"
     ),
     "timeline": (
         "index={index} sourcetype={sourcetype} ({error_filter})"
@@ -206,7 +216,7 @@ def generate_followup_queries(
     error_codes: comma-separated error codes from findings
     sourcetype: primary sourcetype from findings
     spike_start: ISO timestamp of the first spike
-    areas: comma-separated subset of: host_isolation, ocsp, crl, timeline, first_occurrence
+    areas: comma-separated subset of: host_isolation, api_errors, database_slowdown, cascading_failure, timeline, first_occurrence
     """
     from datetime import datetime, timedelta, timezone
 
