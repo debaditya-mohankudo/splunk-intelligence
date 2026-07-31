@@ -123,20 +123,27 @@ uv run pytest tests/
 
 Tests are fully deterministic — no Splunk connection, no server required. Fixtures live in `tests/fixtures/`.
 
+### Testing the `--live` path locally
+
+`local_splunk/` provides a throwaway single-instance Splunk container (Docker, based on
+[`splunk/docker-splunk`](https://github.com/splunk/docker-splunk)) for exercising `--live`
+queries against a real Splunk REST API and real SPL execution — without production credentials
+or SSO. See `local_splunk/README.md` for setup/teardown steps.
+
 ## Key files
 
 | File | Purpose |
 | --- | --- |
 | `splunk/config.py` | All tunables — thresholds, paths, auth |
 | `splunk/parsers.py` | `parse_splunk_json` / `parse_splunk_csv` → `pl.DataFrame` |
-| `splunk/detectors.py` | `detect_spikes`, `detect_cert_anomalies`, `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies`, etc. |
+| `splunk/detectors.py` | `detect_spikes`, `detect_cert_anomalies`, `detect_event_pairs`/`detect_event_pair_patterns` (entity-keyed A-precedes-B correlation, e.g. cert error → later handshake failure on the same host), `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies`, etc. |
 | `splunk/connector.py` | Facade: loading, run state, standalone agent loop, `python -m splunk.connector` CLI |
 | `splunk/mcp_server.py` | FastMCP server — 7 investigation tools (thin wrappers over connector.py) |
 | `splunk/tui.py` | Terminal UI — `python -m splunk.tui`, reads `splunk.db` directly |
 | `splunk/runner.py` | CLI entry point |
 | `splunk/client.py` | Splunk REST client (cookie-based, SSO-compatible) |
 | `splunk/auth.py` | Playwright SSO — opens Chromium, saves cookie |
-| `splunk/db.py` | SQLite store: events, findings, reports, queries, active_runs |
+| `splunk/db.py` | SQLite store: events, findings, reports, queries, active_runs, per-sourcetype schema cache |
 | `splunk/logger.py` | Structured JSON-lines logging per run — audit trail for every connector action |
 
 ## Environment variables

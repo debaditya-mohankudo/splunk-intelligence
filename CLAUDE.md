@@ -71,14 +71,15 @@ uv run python -m splunk.auth
 |------|---------|
 | `splunk/config.py` | All tunables — cert fields, keywords, thresholds, auth paths, model name |
 | `splunk/parsers.py` | `parse_splunk_json` / `parse_splunk_csv` → `pl.DataFrame`; timestamp, cert, timeline transforms |
-| `splunk/detectors.py` | `detect_spikes`, `detect_patterns`, `detect_cert_anomalies`, `correlate_events`, `severity_summary`, `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies`, `detect_http_errors` |
+| `splunk/detectors.py` | `detect_spikes`, `detect_patterns`, `detect_cert_anomalies`, `correlate_events`, `detect_event_pairs`/`detect_event_pair_patterns`, `severity_summary`, `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies`, `detect_http_errors` |
 | `splunk/agent.py` | LangGraph ReAct graph, 4 tools, `analyse(findings) -> str` |
 | `splunk/client.py` | `run_query(spl)` → submit → poll → fetch → parse |
 | `splunk/auth.py` | Playwright SSO, extracts cookie → `~/.splunk/auth.json` |
 | `splunk/runner.py` | CLI entry point, `run_pipeline(df)`, `RunLogger`, DB store |
 | `splunk/logger.py` | `RunLogger` — JSON-lines to `logs/<run_id>.jsonl`, default DEBUG |
-| `splunk/db.py` | SQLite store: `init_db`, `store_events`, `store_findings`, `store_report`, `store_alerts`, `get_alerts`, `ack_alert`, `get_watch_bookmark`/`set_watch_bookmark` |
+| `splunk/db.py` | SQLite store: `init_db`, `store_events`, `store_findings`, `store_report`, `store_alerts`, `get_alerts`, `ack_alert`, `get_watch_bookmark`/`set_watch_bookmark`, `save_schema`/`load_schema`/`reset_schema` (per-sourcetype schema cache for `parsers.py`) |
 | `splunk/watcher.py` | Standalone `python -m splunk.watcher` process — polls Splunk on an interval, runs detectors on each new slice, writes hits to the `alerts` table. Exists because Copilot has no self-scheduling mechanism to drive polling itself. |
+| `local_splunk/` | Throwaway single-instance Splunk container (`docker-splunk`-based) for testing the `--live` path against a real Splunk REST API + real SPL, bypassing `auth.py`'s SSO flow via plain basic auth. Dev/test only — not part of the shipped pipeline. See `local_splunk/README.md`. |
 
 ## Code conventions
 
@@ -104,9 +105,20 @@ to `pl.LazyFrame` query chains and run them together via `pl.collect_all([...])`
 schedules on Polars' own Rust-side thread pool, sidestepping the GIL entirely rather than
 fighting it through Python threads/async.
 
-Note: `detect_spikes` and `correlate_events` use Python `for` loops over rows (sliding
-time windows) and can't be expressed as lazy Polars chains — they'd stay sequential even
-after this change.
+Note: `detect_spikes`, `correlate_events`, and `detect_event_pairs` use Python `for` loops
+over rows (sliding time windows / per-entity pair scanning) and can't be expressed as lazy
+Polars chains — they'd stay sequential even after this change.
+
+## Schema cache (parsers.py + db.py)
+
+`parse_splunk_json` caches a per-sourcetype column→dtype schema in `splunk.db` to speed up
+repeated parses. This is a **soft performance hint, not a correctness guarantee** — the same
+sourcetype can return structurally different result shapes depending on the SPL applied (e.g.
+`transaction`/`stats` producing multivalue list fields where a plain search returns scalars for
+the same field name). On a schema mismatch, `parse_splunk_json` catches the Polars
+`ComputeError`, falls back to inference, and calls `db.reset_schema` (delete-then-insert) rather
+than `db.save_schema` (upsert) so stale fields from the abandoned shape don't linger to collide
+with a third query shape later. See `tests/test_parsers.py` for the regression coverage.
 
 ## Auth
 
