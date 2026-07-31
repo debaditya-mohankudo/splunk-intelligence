@@ -47,8 +47,23 @@ def parse_splunk_json(raw: str) -> pl.DataFrame:
     sourcetype = str(records[0].get("sourcetype", ""))
     cached = _load_schema_cache(sourcetype) if sourcetype else None
     if cached:
-        df = pl.DataFrame(records, schema=cached)
-        logger.debug("JSON parse used cached schema for sourcetype=%s (%d fields)", sourcetype, len(cached))
+        try:
+            df = pl.DataFrame(records, schema=cached)
+            logger.debug("JSON parse used cached schema for sourcetype=%s (%d fields)", sourcetype, len(cached))
+        except pl.exceptions.ComputeError as exc:
+            # The SPL applied can change a field's shape for the same
+            # sourcetype (e.g. `transaction`/`stats` producing multivalue
+            # list fields where a plain search returns scalars) -- the cache
+            # is a soft perf hint, not a correctness guarantee, so fall back
+            # to inference and reset (not merge) the cache to the new shape.
+            logger.warning(
+                "Cached schema for sourcetype=%s no longer matches this result shape (%s) — "
+                "falling back to inference and resetting the cache",
+                sourcetype, exc,
+            )
+            df = pl.DataFrame(records)
+            if sourcetype:
+                _reset_schema_cache(sourcetype, df)
     else:
         df = pl.DataFrame(records)
         if sourcetype:
@@ -92,6 +107,18 @@ def _save_schema_cache(sourcetype: str, df: pl.DataFrame) -> None:
         logger.debug("Schema cached for sourcetype=%s (%d fields)", sourcetype, len(schema))
     except Exception as exc:
         logger.warning("Could not save schema cache: %s", exc)
+
+
+def _reset_schema_cache(sourcetype: str, df: pl.DataFrame) -> None:
+    """Replace the cached schema for a sourcetype after a shape mismatch (see caller)."""
+    try:
+        from splunk.db import init_db, reset_schema
+        init_db()
+        schema = {col: str(dtype) for col, dtype in zip(df.columns, df.dtypes)}
+        reset_schema(sourcetype, schema)
+        logger.debug("Schema reset for sourcetype=%s (%d fields)", sourcetype, len(schema))
+    except Exception as exc:
+        logger.warning("Could not reset schema cache: %s", exc)
 
 
 def _load_schema_cache(sourcetype: str) -> dict[str, type] | None:

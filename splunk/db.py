@@ -222,6 +222,24 @@ def save_schema(sourcetype: str, schema: dict[str, str]) -> None:
     logger.debug("save_schema: upserted %d fields for sourcetype=%s", len(rows), sourcetype)
 
 
+def reset_schema(sourcetype: str, schema: dict[str, str]) -> None:
+    """
+    Replace (not merge) the cached schema for a sourcetype. Unlike save_schema's
+    upsert, this deletes existing rows first -- fields from a since-abandoned
+    result shape (e.g. a prior plain search vs. a later `transaction`/`stats`
+    query against the same sourcetype) must not linger and collide with a
+    third, different shape later.
+    """
+    rows = [(sourcetype, field, dtype) for field, dtype in schema.items()]
+    with _connect() as conn:
+        conn.execute("DELETE FROM sourcetype_schema WHERE sourcetype = ?", (sourcetype,))
+        conn.executemany(
+            "INSERT INTO sourcetype_schema (sourcetype, field_name, dtype) VALUES (?, ?, ?)",
+            rows,
+        )
+    logger.debug("reset_schema: replaced schema for sourcetype=%s (%d fields)", sourcetype, len(rows))
+
+
 def load_schema(sourcetype: str) -> dict[str, str] | None:
     """Return cached {field: dtype} for a sourcetype, or None if unseen."""
     with _connect() as conn:

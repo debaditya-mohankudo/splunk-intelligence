@@ -1,0 +1,27 @@
+services:
+  splunk:
+    image: splunk/splunk:latest
+    container_name: splunk-dummy
+    # No native arm64 image is published by Splunk — this runs under Docker's
+    # amd64 emulation on Apple Silicon. Slower first boot, otherwise fine for
+    # local REST API testing.
+    platform: linux/amd64
+    environment:
+      SPLUNK_START_ARGS: --accept-license
+      SPLUNK_GENERAL_TERMS: --accept-sgt-current-at-splunk-com
+      SPLUNK_PASSWORD: ${SPLUNK_PASSWORD:-Changeme123!}
+      SPLUNK_HEC_TOKEN: ${SPLUNK_HEC_TOKEN:-00000000-0000-0000-0000-000000000000}
+    ports:
+      - "8000:8000"   # Splunk Web
+      - "8089:8089"   # REST/management API (what client.py talks to)
+      - "8088:8088"   # HTTP Event Collector (for ingesting fixture data)
+    volumes:
+      - splunk-var:/opt/splunk/var
+    healthcheck:
+      test: ["CMD", "curl", "-sk", "https://localhost:8089/services/server/info"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  splunk-var:
