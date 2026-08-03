@@ -18,6 +18,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from splunk.tui import SplunkTUI
+
 TUI_APP_PATH = str(Path(__file__).parent.parent / "splunk" / "tui.py")
 
 
@@ -33,13 +35,25 @@ def test_launch_screen_renders(snap_compare):
     assert snap_compare(TUI_APP_PATH, press=["n"], terminal_size=(120, 40))
 
 
-def test_file_picker_renders(snap_compare):
+def test_file_picker_renders(snap_compare, tmp_path):
     """The picker's status message ("Select a .json or .csv Splunk
     export") must actually render — this is the message that was silently
     empty before the StatusChip constructor fix (message string passed to
     Static.__init__ but never assigned to the `message` reactive that
-    render() actually reads)."""
-    assert snap_compare(TUI_APP_PATH, press=["n", "f"], terminal_size=(120, 40))
+    render() actually reads).
+
+    Pinned to a fixed tmp_path (not Path.cwd()) so the rendered DirectoryTree
+    listing is hermetic — this test used to drift every time a file or
+    directory was added/removed at the repo root, since FilePickerScreen
+    rendered the live cwd. `.hidden` here also exercises SplunkFileTree's
+    dotfile filtering."""
+    (tmp_path / "cert_errors.json").write_text("{}")
+    (tmp_path / "access_logs.csv").write_text("")
+    (tmp_path / "notes.txt").write_text("")
+    (tmp_path / ".hidden").write_text("")
+
+    app = SplunkTUI(picker_root=tmp_path)
+    assert snap_compare(app, press=["n", "f"], terminal_size=(120, 40))
 
 
 def test_live_analyze_screen_renders(snap_compare):

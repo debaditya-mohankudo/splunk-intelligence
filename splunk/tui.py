@@ -15,7 +15,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from textual.app import App, ComposeResult
 from textual.containers import Container, Horizontal, Vertical
@@ -33,6 +33,16 @@ from textual.widgets import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+class SplunkFileTree(DirectoryTree):
+    """DirectoryTree that hides dotfiles/dotdirs (.git, .env, .venv, ...) —
+    noise the file picker has no use for and that also made
+    tests/test_tui_snapshots.py::test_file_picker_renders drift every time
+    one appeared or disappeared at the repo root."""
+
+    def filter_paths(self, paths: Iterable[Path]) -> Iterable[Path]:
+        return [path for path in paths if not path.name.startswith(".")]
 
 POLL_INTERVAL = 2.0
 
@@ -540,7 +550,7 @@ class LaunchScreen(CustomScreen):
 
     def action_analyze_file(self) -> None:
         self._log("analyze_file")
-        self.app.push_screen(FilePickerScreen())
+        self.app.push_screen(FilePickerScreen(root=self.app.picker_root))
 
     def action_live_analyze(self) -> None:
         self._log("live_analyze")
@@ -660,10 +670,14 @@ class FilePickerScreen(CustomScreen):
     }
     """
 
+    def __init__(self, root: str | Path = "", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.root = str(root) if root else str(Path.cwd())
+
     def compose(self) -> ComposeResult:
         yield from self.compose_head(1)
         yield StatusChip("Select a .json or .csv Splunk export", id="picker-status")
-        yield DirectoryTree(str(Path.cwd()), id="file-tree")
+        yield SplunkFileTree(self.root, id="file-tree")
         yield from self.compose_foot()
 
     def on_directory_tree_file_selected(self, event: DirectoryTree.FileSelected) -> None:
@@ -892,6 +906,10 @@ class SplunkTUI(App):
     .launch-label { text-style: bold; text-align: center; width: 100%; }
     .launch-hint { color: $text-muted; text-align: center; width: 100%; }
     """
+
+    def __init__(self, picker_root: str | Path | None = None, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self.picker_root = picker_root
 
     def on_mount(self) -> None:
         self.push_screen(HomeScreen())
