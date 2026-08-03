@@ -1,5 +1,5 @@
 """
-LangGraph ReAct agent — Qwen2.5 32B via Ollama.
+LangGraph ReAct agent — chat backend selected via splunk.llm_backends (default: Ollama).
 Receives structured findings from detectors, reasons over them, emits markdown report.
 """
 
@@ -12,7 +12,6 @@ from typing import Annotated, Any
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
-from langchain_ollama import ChatOllama
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
@@ -23,6 +22,7 @@ from dotenv import load_dotenv
 from splunk import config
 from splunk.config import AGENT_MAX_ITER as MAX_ITERATIONS, SPLUNK_INDEX
 from splunk.investigation_areas import get_prompt, get_spl_template
+from splunk.llm_backends import get_backend
 
 load_dotenv()
 
@@ -250,31 +250,11 @@ TOOLS = [summarise_findings, rank_hypotheses, request_deeper_analysis, format_re
 # Graph nodes
 # ---------------------------------------------------------------------------
 
-def _check_ollama_model(model: str) -> None:
-    """Fail fast if Ollama is not running or model is not pulled."""
-    import httpx
-    logger.info("Checking Ollama for model '%s'", model)
-    try:
-        resp = httpx.get("http://localhost:11434/api/tags", timeout=5)
-        resp.raise_for_status()
-        names = [m["name"] for m in resp.json().get("models", [])]
-        base = model.split(":")[0]
-        if not any(base in n for n in names):
-            logger.error("Model '%s' not found. Available: %s", model, names)
-            raise RuntimeError(
-                f"Model '{model}' not found in Ollama. Run: ollama pull {model}\n"
-                f"Available: {names}"
-            )
-        logger.info("Model '%s' confirmed available in Ollama", model)
-    except httpx.ConnectError:
-        logger.error("Ollama not reachable at localhost:11434")
-        raise RuntimeError("Ollama is not running. Start it with: ollama serve")
-
-
 def agent_node(state: LogAnalysisState) -> dict:
     iteration = state.get("iterations", 0) + 1
     logger.debug("Agent iteration %d/%d", iteration, MAX_ITERATIONS)
-    llm = ChatOllama(model=config.LLM_MODEL, temperature=0).bind_tools(TOOLS)
+    backend = get_backend(config.AGENT_BACKEND, config.LLM_MODEL)
+    llm = backend.bind_tools(TOOLS)
     response = llm.invoke(state["messages"])
     tool_calls = getattr(response, "tool_calls", [])
     logger.debug("Iteration %d — tool_calls: %s", iteration, [t["name"] for t in tool_calls])
@@ -376,7 +356,7 @@ _graph = None
 def _get_graph() -> Any:
     global _graph
     if _graph is None:
-        _check_ollama_model(config.LLM_MODEL)
+        get_backend(config.AGENT_BACKEND, config.LLM_MODEL).check_available()
         _graph = _build_graph()
     return _graph
 

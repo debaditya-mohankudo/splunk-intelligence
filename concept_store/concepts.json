@@ -1,5 +1,29 @@
 {
   "concepts": {
+    "llm-backend-seam": {
+      "confidence": 0.8,
+      "contracts": [
+        "LLMBackend.check_available() fails fast with a clear message if the backend can't be used right now (called once, lazily, from agent.py's _get_graph).",
+        "LLMBackend.bind_tools(tools) returns a LangChain-compatible runnable (.invoke(messages) -> AIMessage with .tool_calls) — this is the shape agent_node's ReAct loop requires.",
+        "get_backend(name, model) is the only public factory; unknown names raise ValueError listing valid choices."
+      ],
+      "created_at": "2026-08-03T02:48:55.229769+00:00",
+      "description": "Pluggable chat-backend abstraction for splunk/agent.py's LangGraph ReAct loop, selected via config.AGENT_BACKEND (SPLUNK_AGENT_BACKEND env var). Only 'ollama' is implemented; 'claude_cli'/'copilot_cli' are named seams that raise NotImplementedError rather than silently no-op.",
+      "evidence": [
+        "splunk/llm_backends.py:LLMBackend",
+        "splunk/llm_backends.py:OllamaBackend",
+        "splunk/llm_backends.py:_UnimplementedCLIBackend",
+        "splunk/agent.py:agent_node",
+        "splunk/agent.py:_get_graph",
+        "tests/test_llm_backends.py"
+      ],
+      "invariants": [
+        "Claude CLI and Copilot CLI cannot satisfy the bind_tools/invoke contract as-is because they are themselves agentic tools invoked non-interactively, not chat-completion APIs that emit structured tool calls. Any future implementation of those backends needs a different call path in agent.py (single-shot findings->report), not just filling in the stub class."
+      ],
+      "last_validated": "2026-08-03T02:48:55.229785+00:00",
+      "module": "splunk/llm_backends.py",
+      "name": "llm-backend-seam"
+    },
     "standalone-agent-langgraph": {
       "confidence": 0.8,
       "contracts": [
@@ -27,6 +51,6 @@
     }
   },
   "meta": {
-    "updated_at": "2026-08-03T02:43:16.421208+00:00"
+    "updated_at": "2026-08-03T02:48:55.229847+00:00"
   }
 }

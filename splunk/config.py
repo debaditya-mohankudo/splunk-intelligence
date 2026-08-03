@@ -17,6 +17,10 @@ INVESTIGATOR_MAX_ITER: int = int(os.environ.get("SPLUNK_INVESTIGATOR_MAX_ITER", 
 
 LLM_MODEL: str = os.environ.get("SPLUNK_LLM_MODEL", "qwen2.5:14b")
 AGENT_MAX_ITER: int = int(os.environ.get("SPLUNK_AGENT_MAX_ITER", "10"))
+# Chat backend driving the ReAct loop in splunk/agent.py. Only "ollama" is
+# implemented; "claude_cli"/"copilot_cli" are registered seams for future work
+# (see splunk/llm_backends.py).
+AGENT_BACKEND: str = os.environ.get("SPLUNK_AGENT_BACKEND", "ollama")
 
 # ---------------------------------------------------------------------------
 # PKI / cert field names
