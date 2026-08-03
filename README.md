@@ -156,7 +156,7 @@ every turn.
 | Tool | Purpose |
 | --- | --- |
 | `splunk__investigate_start` | Load file or live SPL query, run detectors, return structured findings + `run_id` |
-| `splunk__submit_report` | Submit a markdown report and follow-up SPL queries; returns `{status, findings}` |
+| `splunk__submit_report` | Submit a markdown report and follow-up SPL queries; returns `{status, findings, next}` (`continue`) or `{status, ui_url}` (`done`) — either may also carry advisory `repo_path_nudge`/`confidence_nudge`/`followup_nudge` keys, never blocking, just surfacing something worth noting in the final summary |
 | `splunk__get_findings` | Read current findings for an active run without advancing the loop |
 | `splunk__pause` | Stop the loop after the current iteration |
 | `splunk__hint` | Inject an analyst hint that shapes the next iteration |
@@ -209,6 +209,9 @@ or SSO. See `local_splunk/README.md` for setup/teardown steps.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `SPLUNK_URL` | — | Splunk base URL (required for live queries) |
+| `SPLUNK_INDEX` | `*` | Default index substituted into generated follow-up SPL (standalone agent path) |
+| `SPLUNK_INVESTIGATOR_MAX_ITER` | `3` | MCP-driven investigation loop's iteration cap (primary path — `splunk__submit_report`) |
+| `SPLUNK_CORRELATE_WINDOW` | `60` | Event-pair correlation window (seconds) for `detect_event_pairs`/`detect_event_pair_patterns` |
 | `SPLUNK_SPIKE_THRESHOLD` | `10` | Events/window to trigger a spike |
 | `SPLUNK_SPIKE_WINDOW` | `60` | Spike detection window (seconds) |
 | `SPLUNK_SLOW_QUERY_THRESHOLD_MS` | `1000` | Duration (ms) above which an event is flagged as a slow query |
@@ -216,6 +219,9 @@ or SSO. See `local_splunk/README.md` for setup/teardown steps.
 | `SPLUNK_ANOMALY_Z_THRESHOLD` | `3.0` | \|z-score\| above which an event is flagged as a numeric anomaly |
 | `SPLUNK_COOKIE_NAME` | `splunkd_8089` | Splunk session cookie name |
 | `SPLUNK_AUTH_PATH` | `~/.splunk/auth.json` | Cookie persist path |
+| `SPLUNK_POLL_INTERVAL` | `2` | Live REST job polling interval (seconds) |
+| `SPLUNK_POLL_TIMEOUT` | `300` | Live REST job poll timeout (seconds) |
+| `SPLUNK_MAX_REAUTH` | `3` | Max silent re-auth attempts on a 401 before failing |
 | `LOG_LEVEL` | `DEBUG` | Log verbosity |
 | `SPLUNK_AGENT_BACKEND` | `ollama` | Standalone agent (`--investigate`) chat backend — `ollama`, `claude_cli`, `copilot_cli` |
 | `SPLUNK_LLM_MODEL` | `qwen2.5:14b` | Ollama model (backend `ollama`) |
