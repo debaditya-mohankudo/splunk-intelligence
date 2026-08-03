@@ -17,14 +17,10 @@ from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from typing_extensions import TypedDict
 
-from dotenv import load_dotenv
-
 from splunk import config
 from splunk.config import AGENT_MAX_ITER as MAX_ITERATIONS, SPLUNK_INDEX
 from splunk.investigation_areas import get_prompt, get_spl_template
 from splunk.llm_backends import get_backend
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 

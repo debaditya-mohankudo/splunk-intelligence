@@ -7,6 +7,7 @@ dependencies = [
     "playwright",
     "requests",
     "python-dotenv",
+    "pydantic-settings",
     "polars",
     "mcp[cli]>=1.28.1",
     "textual",

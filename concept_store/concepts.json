@@ -1,5 +1,29 @@
 {
   "concepts": {
+    "config-settings": {
+      "confidence": 0.8,
+      "contracts": [
+        "Every public name (SPLUNK_INDEX, INVESTIGATOR_MAX_ITER, LLM_MODEL, AUTH_JSON_PATH, etc.) is a flat module-level constant assigned from one _settings = _Settings() instance at import time — consumers use `from splunk.config import X` or `config.X` exactly as before the pydantic-settings migration; nothing reaches through a nested settings object.",
+        "Direct runtime mutation of a public name (`config.SPLUNK_URL = url`, done by splunk/tui.py's Config screen on save) is a supported pattern — it reassigns the flat module attribute and is independent of the underlying _Settings instance.",
+        "Static defaults with no env var (CERT_FIELDS, CERT_ANOMALY_KEYWORDS, CORRELATE_PAIR_PATTERNS, DURATION_FIELDS, STATUS_CODE_FIELDS, ANOMALY_NUMERIC_FIELDS) stay plain module constants outside the _Settings class — not forced into pydantic fields just for consistency.",
+        "auth.py/client.py/agent.py no longer call load_dotenv() themselves (removed — was redundant once config.py loads .env on its own and none of those modules read os.environ directly for anything else)."
+      ],
+      "created_at": "2026-08-03T17:11:19.788292+00:00",
+      "description": "Centralised configuration, backed by a pydantic-settings BaseSettings class (_Settings, env_file=\".env\") so .env is loaded automatically regardless of import order — replaces a prior design where config.py read os.environ directly with no load_dotenv() of its own, silently ignoring .env unless some other already-imported module (auth.py/client.py/agent.py) happened to call load_dotenv() first.",
+      "evidence": [
+        "splunk/config.py:_Settings",
+        "splunk/config.py (module-level constant assignments from _settings)",
+        "splunk/tui.py:627,631 (config.SPLUNK_URL/config.LLM_MODEL runtime mutation)",
+        "tests/test_connector.py:156 (from splunk.config import INVESTIGATOR_MAX_ITER)"
+      ],
+      "invariants": [
+        "config.py is the only place .env is read for config purposes; do not add load_dotenv() calls to other modules to work around a var not appearing — add it as a _Settings field instead.",
+        "SPLUNK_ prefix env var names match the _Settings field names 1:1 (case-sensitive) — pydantic-settings' default env var matching, no aliasing needed."
+      ],
+      "last_validated": "2026-08-03T17:11:19.788315+00:00",
+      "module": "splunk/config.py",
+      "name": "config-settings"
+    },
     "llm-backend-seam": {
       "confidence": 0.8,
       "contracts": [
@@ -81,6 +105,6 @@
     }
   },
   "meta": {
-    "updated_at": "2026-08-03T16:29:09.083473+00:00"
+    "updated_at": "2026-08-03T17:11:19.788394+00:00"
   }
 }

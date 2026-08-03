@@ -1,30 +1,81 @@
 """
 Centralised configuration and tunable constants for the splunk pipeline.
-Override via environment variables or by editing this file before running.
+Override via environment variables, a .env file at the repo root, or by
+editing this file before running.
+
+Uses pydantic-settings' BaseSettings so .env is loaded automatically
+regardless of which module is imported first — previously config.py read
+os.environ directly at import time with no load_dotenv() call of its own,
+so .env values were silently ignored unless some other already-imported
+module (auth.py/client.py/agent.py) happened to call load_dotenv() first.
+
+Every public name below is still a flat module-level constant, assigned
+from one _Settings() instance at import time — existing `from splunk.config
+import X` imports and direct `config.X = value` mutation (e.g. splunk/tui.py's
+Config screen) both keep working unchanged.
 """
 
 from __future__ import annotations
 
-import os
+from pathlib import Path
 
-SPLUNK_INDEX: str = os.environ.get("SPLUNK_INDEX", "*")
-INVESTIGATOR_MAX_ITER: int = int(os.environ.get("SPLUNK_INVESTIGATOR_MAX_ITER", "3"))
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class _Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    SPLUNK_INDEX: str = "*"
+    SPLUNK_INVESTIGATOR_MAX_ITER: int = 3
+
+    # Standalone LangGraph/Ollama agent (splunk/agent.py) — optional fallback
+    # for environments without Copilot/Claude Code. Requires `uv sync --extra llm`.
+    SPLUNK_LLM_MODEL: str = "qwen2.5:14b"
+    SPLUNK_AGENT_MAX_ITER: int = 10
+    # Chat backend driving the ReAct loop in splunk/agent.py: "ollama" (default),
+    # "claude_cli", or "copilot_cli" (see splunk/llm_backends.py).
+    SPLUNK_AGENT_BACKEND: str = "ollama"
+    SPLUNK_CLAUDE_CLI_MODEL: str = "sonnet"
+    SPLUNK_COPILOT_CLI_MODEL: str = "claude-sonnet-4.5"
+
+    # Detector thresholds
+    SPLUNK_SPIKE_WINDOW: int = 60
+    SPLUNK_SPIKE_THRESHOLD: int = 10
+    SPLUNK_CORRELATE_WINDOW: int = 60
+    SPLUNK_SLOW_QUERY_THRESHOLD_MS: int = 1000
+    SPLUNK_ANOMALY_WINDOW: int = 20
+    SPLUNK_ANOMALY_Z_THRESHOLD: float = 3.0
+
+    # Auth
+    SPLUNK_AUTH_PATH: Path = Path.home() / ".splunk" / "auth.json"
+    SPLUNK_COOKIE_NAME: str = "splunkd_8089"
+    SPLUNK_URL: str = ""
+
+    # Job polling
+    SPLUNK_POLL_INTERVAL: int = 2
+    SPLUNK_POLL_TIMEOUT: int = 300
+    SPLUNK_MAX_REAUTH: int = 3
+
+    # Watcher (splunk/watcher.py) — standalone continuous-monitoring process
+    SPLUNK_WATCH_SPL: str = ""
+    SPLUNK_WATCH_INTERVAL: int = 60
+    SPLUNK_WATCH_LOOKBACK: str = "-15m"
+    SPLUNK_WATCH_OVERLAP: int = 30
+
+
+_settings = _Settings()
+
+SPLUNK_INDEX: str = _settings.SPLUNK_INDEX
+INVESTIGATOR_MAX_ITER: int = _settings.SPLUNK_INVESTIGATOR_MAX_ITER
+
+LLM_MODEL: str = _settings.SPLUNK_LLM_MODEL
+AGENT_MAX_ITER: int = _settings.SPLUNK_AGENT_MAX_ITER
+AGENT_BACKEND: str = _settings.SPLUNK_AGENT_BACKEND
+CLAUDE_CLI_MODEL: str = _settings.SPLUNK_CLAUDE_CLI_MODEL
+COPILOT_CLI_MODEL: str = _settings.SPLUNK_COPILOT_CLI_MODEL
 
 # ---------------------------------------------------------------------------
-# Standalone LangGraph/Ollama agent (splunk/agent.py) — optional fallback for
-# environments without Copilot/Claude Code. Requires `uv sync --extra llm`.
-# ---------------------------------------------------------------------------
-
-LLM_MODEL: str = os.environ.get("SPLUNK_LLM_MODEL", "qwen2.5:14b")
-AGENT_MAX_ITER: int = int(os.environ.get("SPLUNK_AGENT_MAX_ITER", "10"))
-# Chat backend driving the ReAct loop in splunk/agent.py: "ollama" (default),
-# "claude_cli", or "copilot_cli" (see splunk/llm_backends.py).
-AGENT_BACKEND: str = os.environ.get("SPLUNK_AGENT_BACKEND", "ollama")
-CLAUDE_CLI_MODEL: str = os.environ.get("SPLUNK_CLAUDE_CLI_MODEL", "sonnet")
-COPILOT_CLI_MODEL: str = os.environ.get("SPLUNK_COPILOT_CLI_MODEL", "claude-sonnet-4.5")
-
-# ---------------------------------------------------------------------------
-# PKI / cert field names
+# PKI / cert field names — static defaults, no env var
 # ---------------------------------------------------------------------------
 
 CERT_FIELDS: frozenset[str] = frozenset({
@@ -42,10 +93,10 @@ CERT_ANOMALY_KEYWORDS: list[str] = [
 # Detector thresholds
 # ---------------------------------------------------------------------------
 
-SPIKE_WINDOW_SECONDS: int = int(os.environ.get("SPLUNK_SPIKE_WINDOW", "60"))
-SPIKE_THRESHOLD: int = int(os.environ.get("SPLUNK_SPIKE_THRESHOLD", "10"))
-CORRELATE_WINDOW_SECONDS: int = int(os.environ.get("SPLUNK_CORRELATE_WINDOW", "60"))
-SLOW_QUERY_THRESHOLD_MS: int = int(os.environ.get("SPLUNK_SLOW_QUERY_THRESHOLD_MS", "1000"))
+SPIKE_WINDOW_SECONDS: int = _settings.SPLUNK_SPIKE_WINDOW
+SPIKE_THRESHOLD: int = _settings.SPLUNK_SPIKE_THRESHOLD
+CORRELATE_WINDOW_SECONDS: int = _settings.SPLUNK_CORRELATE_WINDOW
+SLOW_QUERY_THRESHOLD_MS: int = _settings.SPLUNK_SLOW_QUERY_THRESHOLD_MS
 
 # Entity-keyed event-pair patterns for detect_event_pairs — each entry flags
 # entity_field values where a first_pattern event precedes a second_pattern
@@ -77,8 +128,8 @@ STATUS_CODE_FIELDS: list[str] = [
     "status", "status_code", "http_status", "response_code", "statuscode",
 ]
 
-ANOMALY_ROLLING_WINDOW: int = int(os.environ.get("SPLUNK_ANOMALY_WINDOW", "20"))
-ANOMALY_Z_THRESHOLD: float = float(os.environ.get("SPLUNK_ANOMALY_Z_THRESHOLD", "3.0"))
+ANOMALY_ROLLING_WINDOW: int = _settings.SPLUNK_ANOMALY_WINDOW
+ANOMALY_Z_THRESHOLD: float = _settings.SPLUNK_ANOMALY_Z_THRESHOLD
 
 # Candidate numeric field names to scan for rolling z-score anomalies, checked in order.
 ANOMALY_NUMERIC_FIELDS: list[str] = [
@@ -90,25 +141,23 @@ ANOMALY_NUMERIC_FIELDS: list[str] = [
 # Auth
 # ---------------------------------------------------------------------------
 
-from pathlib import Path  # noqa: E402
-
-AUTH_JSON_PATH: Path = Path(os.environ.get("SPLUNK_AUTH_PATH", str(Path.home() / ".splunk" / "auth.json")))
-COOKIE_NAME: str = os.environ.get("SPLUNK_COOKIE_NAME", "splunkd_8089")
-SPLUNK_URL: str = os.environ.get("SPLUNK_URL", "").rstrip("/")
+AUTH_JSON_PATH: Path = _settings.SPLUNK_AUTH_PATH
+COOKIE_NAME: str = _settings.SPLUNK_COOKIE_NAME
+SPLUNK_URL: str = _settings.SPLUNK_URL.rstrip("/")
 
 # ---------------------------------------------------------------------------
 # Job polling
 # ---------------------------------------------------------------------------
 
-POLL_INTERVAL: int = int(os.environ.get("SPLUNK_POLL_INTERVAL", "2"))
-POLL_TIMEOUT: int = int(os.environ.get("SPLUNK_POLL_TIMEOUT", "300"))
-MAX_REAUTH_ATTEMPTS: int = int(os.environ.get("SPLUNK_MAX_REAUTH", "3"))
+POLL_INTERVAL: int = _settings.SPLUNK_POLL_INTERVAL
+POLL_TIMEOUT: int = _settings.SPLUNK_POLL_TIMEOUT
+MAX_REAUTH_ATTEMPTS: int = _settings.SPLUNK_MAX_REAUTH
 
 # ---------------------------------------------------------------------------
 # Watcher (splunk/watcher.py) — standalone continuous-monitoring process
 # ---------------------------------------------------------------------------
 
-WATCH_SPL: str = os.environ.get("SPLUNK_WATCH_SPL", "")
-WATCH_INTERVAL: int = int(os.environ.get("SPLUNK_WATCH_INTERVAL", "60"))
-WATCH_LOOKBACK: str = os.environ.get("SPLUNK_WATCH_LOOKBACK", "-15m")
-WATCH_OVERLAP: int = int(os.environ.get("SPLUNK_WATCH_OVERLAP", "30"))
+WATCH_SPL: str = _settings.SPLUNK_WATCH_SPL
+WATCH_INTERVAL: int = _settings.SPLUNK_WATCH_INTERVAL
+WATCH_LOOKBACK: str = _settings.SPLUNK_WATCH_LOOKBACK
+WATCH_OVERLAP: int = _settings.SPLUNK_WATCH_OVERLAP

@@ -638,7 +638,7 @@ class ConfigScreen(CustomScreen):
     @staticmethod
     def _write_env_var(key: str, value: str) -> None:
         """Create/update a KEY=value line in .env, preserving every other
-        line untouched — same file client.py/auth.py's load_dotenv() reads
+        line untouched — same file splunk.config's pydantic-settings reads
         on the next run."""
         env_path = Path.cwd() / ".env"
         lines = env_path.read_text().splitlines() if env_path.exists() else []

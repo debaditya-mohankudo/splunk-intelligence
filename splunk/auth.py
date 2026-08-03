@@ -9,13 +9,10 @@ import json
 import logging
 from pathlib import Path
 
-from dotenv import load_dotenv
 from playwright.sync_api import sync_playwright
 
 from splunk import config
 from splunk.config import AUTH_JSON_PATH as AUTH_PATH, COOKIE_NAME
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 

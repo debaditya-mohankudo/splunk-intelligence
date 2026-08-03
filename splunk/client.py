@@ -14,7 +14,6 @@ from pathlib import Path
 from typing import Any
 
 import requests
-from dotenv import load_dotenv
 
 from splunk import config
 from splunk.config import (
@@ -24,8 +23,6 @@ from splunk.config import (
     POLL_TIMEOUT,
 )
 from splunk.parsers import parse_splunk_json
-
-load_dotenv()
 
 logger = logging.getLogger(__name__)
 
