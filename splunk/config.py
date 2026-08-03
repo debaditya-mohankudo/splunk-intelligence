@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 
-SPLUNK_INDEX: str = os.environ.get("SPLUNK_INDEX", "pki")
+SPLUNK_INDEX: str = os.environ.get("SPLUNK_INDEX", "*")
 INVESTIGATOR_MAX_ITER: int = int(os.environ.get("SPLUNK_INVESTIGATOR_MAX_ITER", "3"))
 
 # ---------------------------------------------------------------------------
