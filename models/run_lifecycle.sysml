@@ -32,7 +32,7 @@ package RunLifecycle {
     private import Foundation::ModelProvenance;
 
     @ModelProvenance {
-        derivedFromCommit = "9f1c0b328c98bfd8828593fe66335d3ef76d08aa";
+        derivedFromCommit = "dc1da4ad533833e9fe08341f5189e5a8d87247c6";
         derivedAt = "2026-08-03";
         modelledPaths = (
             "splunk/connector.py",

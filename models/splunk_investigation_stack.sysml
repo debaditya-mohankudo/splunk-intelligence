@@ -48,7 +48,7 @@ package SplunkInvestigationStack {
     private import Foundation::ModelProvenance;
 
     @ModelProvenance {
-        derivedFromCommit = "4f91e33e1a5dc926054d812cf6d81a30a7b93e00";
+        derivedFromCommit = "aadd4cd149dd29ca4fdda685818b3931dcb78ce0";
         derivedAt = "2026-08-03";
         modelledPaths = (
             "splunk/parsers.py",
@@ -56,6 +56,7 @@ package SplunkInvestigationStack {
             "splunk/investigator.py",
             "splunk/db.py",
             "splunk/connector.py",
+            "splunk/dispatcher.py",
             "splunk/mcp_server.py",
             "splunk/runner.py",
             "splunk/tui.py",
@@ -96,7 +97,15 @@ package SplunkInvestigationStack {
              * (iteration, confidence, pause flag, hint) into Persistence's
              * `active_runs` table on every update so any process can
              * observe live progress. Also drives the standalone agent's
-             * outer loop (run_standalone_agent). */
+             * outer loop (run_standalone_agent).
+             *
+             * start_investigation/submit_report each wrap their result-
+             * building in splunk/dispatcher.py's tool_called context
+             * manager, which fires an advisory post-hook (repo_path_nudge,
+             * confidence_nudge, followup_nudge) only when the result carries
+             * no "error" key — never blocking, only adding an optional key
+             * the calling agent may act on. Self-contained in-repo; no
+             * dependency on an external MCP-host hook. */
         part foundation : Foundation;
         part core : DetectionCore;
         part store : Persistence;
