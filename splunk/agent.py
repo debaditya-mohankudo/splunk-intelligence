@@ -22,6 +22,7 @@ from dotenv import load_dotenv
 
 from splunk import config
 from splunk.config import AGENT_MAX_ITER as MAX_ITERATIONS, SPLUNK_INDEX
+from splunk.investigation_areas import get_prompt, get_spl_template
 
 load_dotenv()
 
@@ -35,11 +36,15 @@ reason only over what's actually present in the data, whatever domain it comes f
 application errors, infrastructure metrics, etc.).
 
 Your job:
-1. Reason over the findings to identify the most likely root cause.
-2. Reference specific timestamps, hosts, error codes, and sourcetypes from the data.
-3. Form a root cause hypothesis and assign a confidence level (High / Medium / Low).
-4. Suggest the next 2–3 investigation steps an analyst should take.
-5. Emit your final answer as a structured markdown report using format_report.
+1. Reason over the findings to identify candidate root causes.
+2. Register them with rank_hypotheses so they're tracked through the investigation — use
+   request_deeper_analysis and generate_followup_queries (naming the relevant area for each)
+   to gather evidence for or against each one.
+3. Reference specific timestamps, hosts, error codes, and sourcetypes from the data.
+4. Once one hypothesis is clearly supported, assign a confidence level (High / Medium / Low)
+   and emit your final answer via format_report, passing that hypothesis's claim text as
+   confirmed_hypothesis so it's marked resolved.
+5. Suggest the next 2–3 investigation steps an analyst should take.
 
 Think step by step. Use tools to organise your reasoning before calling format_report.
 Do not hallucinate field values — only reference data present in the findings."""
@@ -55,6 +60,7 @@ class LogAnalysisState(TypedDict):
     report: str
     followup_queries: list[str]
     iterations: int
+    hypotheses: list[dict[str, Any]]
 
 
 # ---------------------------------------------------------------------------
@@ -99,18 +105,36 @@ def summarise_findings(findings_json: str) -> str:
 @tool
 def rank_hypotheses(hypotheses_json: str) -> str:
     """
-    Given a JSON list of hypothesis strings, rank them by likelihood based
-    on the findings and return an ordered list with reasoning.
-    This tool is a reasoning scaffold — return the input ranked with brief justification.
+    Given a JSON list of root-cause hypotheses, rank them by likelihood based on the
+    findings and register them for tracking across the investigation.
+    Each item is either a plain string, or an object {"claim": str, "area": str (optional,
+    an area from request_deeper_analysis), "evidence": str (optional, brief supporting reference)}.
+    Registered hypotheses start with status "open" and are confirmed/rejected as the
+    investigation proceeds (e.g. via format_report's root_cause).
     """
     try:
-        hypotheses = json.loads(hypotheses_json)
+        raw = json.loads(hypotheses_json)
     except json.JSONDecodeError:
         return "Invalid JSON list of hypotheses."
-    if not isinstance(hypotheses, list):
-        return "Expected a JSON array of hypothesis strings."
-    ranked = "\n".join(f"{i+1}. {h}" for i, h in enumerate(hypotheses))
-    return f"Hypotheses to evaluate (rank these by evidence strength):\n{ranked}"
+    if not isinstance(raw, list):
+        return "Expected a JSON array of hypotheses."
+
+    normalised = []
+    for h in raw:
+        if isinstance(h, str):
+            normalised.append({"claim": h, "area": "", "evidence": "", "status": "open"})
+        elif isinstance(h, dict) and "claim" in h:
+            normalised.append({
+                "claim": h["claim"],
+                "area": h.get("area", ""),
+                "evidence": h.get("evidence", ""),
+                "status": "open",
+            })
+
+    # tool_node_fn re-derives `normalised` from this same call's tool-call args
+    # (state persistence happens there, not via the return value).
+    ranked = "\n".join(f"{i+1}. {h['claim']}" for i, h in enumerate(normalised))
+    return f"Hypotheses registered, ranked by evidence strength:\n{ranked}"
 
 
 @tool
@@ -118,16 +142,11 @@ def request_deeper_analysis(area: str) -> str:
     """
     Signal that a specific area needs deeper investigation.
     Returns a prompt for the agent to focus its next reasoning step.
-    area: one of 'api_errors', 'database_slowdown', 'cascading_failure', 'host_isolation', 'timeline'
+    area: a domain from splunk.investigation_areas.INVESTIGATION_AREAS (e.g. 'api_errors',
+    'database_slowdown', 'cascading_failure', 'host_isolation', 'timeline') — any other
+    string is accepted too and falls back to a generic investigation prompt.
     """
-    prompts = {
-        "api_errors": "Examine 4xx/5xx HTTP error spikes — check if failures cluster by endpoint, status code, or host.",
-        "database_slowdown": "Analyse slow queries and elevated latency — correlate with specific hosts, endpoints, or time windows.",
-        "cascading_failure": "Look for an entity-keyed chain of failures (e.g. one service's error preceding another's on the same host) — build a dependency timeline of what failed first.",
-        "host_isolation": "Determine if errors are isolated to specific hosts or widespread — check host_ranking.",
-        "timeline": "Build a precise timeline of first occurrence vs escalation — use correlations data.",
-    }
-    return prompts.get(area, f"Investigate '{area}' in detail using the available findings.")
+    return get_prompt(area)
 
 
 @tool
@@ -138,6 +157,7 @@ def format_report(
     affected_hosts: str,
     timeline: str,
     next_steps: str,
+    confirmed_hypothesis: str = "",
 ) -> str:
     """
     Emit the final markdown investigation report.
@@ -145,6 +165,9 @@ def format_report(
     confidence: 'High', 'Medium', or 'Low'
     affected_hosts: comma-separated list
     next_steps: newline-separated list of 2-3 actions
+    confirmed_hypothesis: optional — the claim text of a hypothesis registered via
+    rank_hypotheses that this report's root_cause confirms. If set, that hypothesis is
+    marked confirmed and every other still-open hypothesis is marked rejected.
     """
     steps = "\n".join(f"- {s.strip()}" for s in next_steps.strip().splitlines() if s.strip())
     return f"""# Splunk Investigation Report
@@ -168,40 +191,6 @@ def format_report(
 """
 
 
-_SPL_TEMPLATES: dict[str, str] = {
-    "host_isolation": (
-        "index={index} host IN ({hosts}) earliest={spike_start} latest=+2h"
-        " | stats count by host, sourcetype, error_code | sort -count"
-    ),
-    "api_errors": (
-        "index={index} sourcetype={sourcetype} host IN ({hosts}) status>=400"
-        " earliest={spike_start} latest=+1h"
-        " | stats count by host, status, uri | sort -count"
-    ),
-    "database_slowdown": (
-        "index={index} sourcetype={sourcetype} host IN ({hosts})"
-        " earliest={spike_start} latest=+1h"
-        " | where duration_ms > 1000"
-        " | stats avg(duration_ms) as avg_ms, max(duration_ms) as max_ms, count by host"
-        " | sort -max_ms"
-    ),
-    "cascading_failure": (
-        "index={index} host IN ({hosts})"
-        " earliest={spike_start_minus5m} latest={spike_start_plus30m}"
-        " | transaction host maxspan=1h"
-        " | table _time, host, duration, eventcount"
-    ),
-    "timeline": (
-        "index={index} sourcetype={sourcetype} ({error_filter})"
-        " | timechart span=1m count by host"
-    ),
-    "first_occurrence": (
-        "index={index} sourcetype={sourcetype} ({error_filter})"
-        " | sort _time | head 1 | table _time, host, sourcetype, message"
-    ),
-}
-
-
 @tool
 def generate_followup_queries(
     hosts: str,
@@ -216,7 +205,9 @@ def generate_followup_queries(
     error_codes: comma-separated error codes from findings
     sourcetype: primary sourcetype from findings
     spike_start: ISO timestamp of the first spike
-    areas: comma-separated subset of: host_isolation, api_errors, database_slowdown, cascading_failure, timeline, first_occurrence
+    areas: comma-separated area names from splunk.investigation_areas.INVESTIGATION_AREAS
+    that have a spl_template (e.g. host_isolation, api_errors, database_slowdown,
+    cascading_failure, timeline, first_occurrence)
     """
     from datetime import datetime, timedelta, timezone
 
@@ -243,11 +234,11 @@ def generate_followup_queries(
 
     queries = []
     for area in (a.strip() for a in areas.split(",") if a.strip()):
-        tmpl = _SPL_TEMPLATES.get(area)
+        tmpl = get_spl_template(area)
         if tmpl:
             queries.append(f"-- {area}\n{tmpl.format(**slots)}")
         else:
-            logger.warning("Unknown area '%s' requested in generate_followup_queries", area)
+            logger.warning("Unknown area '%s' (or area has no spl_template) in generate_followup_queries", area)
 
     return "\n\n".join(queries) if queries else "No queries generated — check area names."
 
@@ -298,19 +289,54 @@ def tool_node_fn(state: LogAnalysisState) -> dict:
     result = node.invoke(state)
     report = state.get("report", "")
     followup_queries = state.get("followup_queries", [])
+    hypotheses = list(state.get("hypotheses", []))
+
+    # Map tool_call_id -> call args from the preceding AIMessage, since ToolMessage
+    # only carries the string return value, not the arguments the tool was called with.
+    last = state["messages"][-1]
+    call_args_by_id = {
+        c["id"]: c.get("args", {}) for c in getattr(last, "tool_calls", [])
+    } if isinstance(last, AIMessage) else {}
+
     for msg in result.get("messages", []):
         if not hasattr(msg, "name"):
             continue
+        args = call_args_by_id.get(getattr(msg, "tool_call_id", None), {})
         if msg.name == "format_report" and msg.content:
             logger.info("format_report called — report captured (%d chars)", len(msg.content))
             report = msg.content
+            confirmed = args.get("confirmed_hypothesis")
+            if confirmed:
+                for h in hypotheses:
+                    if h["claim"] == confirmed:
+                        h["status"] = "confirmed"
+                    elif h["status"] == "open":
+                        h["status"] = "rejected"
+                logger.info("Hypothesis confirmed: %r", confirmed)
         elif msg.name == "generate_followup_queries" and msg.content:
             new_queries = [q.strip() for q in msg.content.split("\n\n") if q.strip()]
             followup_queries = followup_queries + new_queries
             logger.info("generate_followup_queries called — %d queries captured", len(new_queries))
+        elif msg.name == "rank_hypotheses":
+            try:
+                raw = json.loads(args.get("hypotheses_json", "[]"))
+            except (json.JSONDecodeError, TypeError):
+                raw = []
+            existing_claims = {h["claim"] for h in hypotheses}
+            for h in raw:
+                if isinstance(h, str) and h not in existing_claims:
+                    hypotheses.append({"claim": h, "area": "", "evidence": "", "status": "open"})
+                elif isinstance(h, dict) and h.get("claim") and h["claim"] not in existing_claims:
+                    hypotheses.append({
+                        "claim": h["claim"],
+                        "area": h.get("area", ""),
+                        "evidence": h.get("evidence", ""),
+                        "status": "open",
+                    })
+            logger.info("rank_hypotheses called — %d hypothesis(es) tracked", len(hypotheses))
         else:
             logger.debug("Tool executed: %s", msg.name)
-    return {**result, "report": report, "followup_queries": followup_queries}
+    return {**result, "report": report, "followup_queries": followup_queries, "hypotheses": hypotheses}
 
 
 def should_continue(state: LogAnalysisState) -> str:
@@ -318,6 +344,10 @@ def should_continue(state: LogAnalysisState) -> str:
     iterations = state.get("iterations", 0)
     if iterations >= MAX_ITERATIONS:
         logger.warning("ReAct loop hit max iterations (%d) — forcing END.", MAX_ITERATIONS)
+        return END
+    hypotheses = state.get("hypotheses", [])
+    if hypotheses and all(h["status"] != "open" for h in hypotheses):
+        logger.info("All %d tracked hypothesis(es) resolved — ending loop early.", len(hypotheses))
         return END
     if isinstance(last, AIMessage) and last.tool_calls:
         logger.debug("Continuing loop — %d tool call(s) requested", len(last.tool_calls))
@@ -376,11 +406,18 @@ def analyse(findings: dict[str, Any]) -> tuple[str, list[str]]:
         "report": "",
         "followup_queries": [],
         "iterations": 0,
+        "hypotheses": [],
     }
 
     final_state = graph.invoke(initial_state)
     total_iterations = final_state.get("iterations", 0)
     queries = final_state.get("followup_queries", [])
+    hypotheses = final_state.get("hypotheses", [])
+    if hypotheses:
+        logger.info(
+            "Hypotheses tracked: %s",
+            [(h["claim"], h["status"]) for h in hypotheses],
+        )
 
     if final_state.get("report"):
         logger.info("Analysis complete — report from format_report (%d chars, %d iterations)", len(final_state["report"]), total_iterations)

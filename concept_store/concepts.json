@@ -1,0 +1,32 @@
+{
+  "concepts": {
+    "standalone-agent-langgraph": {
+      "confidence": 0.8,
+      "contracts": [
+        "analyse(findings: dict) -> tuple[str, list[str]] is the sole public entry point; its return shape is a contract consumed by connector.py at two call sites and must not change without updating both.",
+        "Domain-specific investigation guidance (prompts + SPL query templates) lives in splunk/investigation_areas.INVESTIGATION_AREAS, not hardcoded in agent.py's tool bodies — request_deeper_analysis and generate_followup_queries both read from it via get_prompt/get_spl_template.",
+        "LogAnalysisState.hypotheses tracks root-cause candidates registered via rank_hypotheses (status starts 'open'); format_report's confirmed_hypothesis arg marks one confirmed and all other open ones rejected. This state is internal to a single analyse() graph invocation only — it does not persist across the outer per-iteration analyse() calls in connector.py's investigation loop.",
+        "Tool call arguments (not tool return strings) are the channel for state mutation in tool_node_fn — it reads args from the preceding AIMessage.tool_calls, matched by tool_call_id, rather than parsing sentinel markers out of a tool's return value (format_report's return value is used verbatim as the final report, so it must stay clean)."
+      ],
+      "created_at": "2026-08-03T02:43:16.420467+00:00",
+      "description": "LangGraph ReAct agent (Qwen2.5 via Ollama) used only behind the --investigate CLI flag / connector.py's run_standalone_agent path — the fallback investigation loop for environments without Copilot/Claude driving MCP directly. Reasons over detector findings via a small tool set and emits a markdown report through format_report.",
+      "evidence": [
+        "splunk/agent.py:LogAnalysisState",
+        "splunk/agent.py:tool_node_fn",
+        "splunk/agent.py:should_continue",
+        "splunk/investigation_areas.py:INVESTIGATION_AREAS",
+        "tests/test_agent.py"
+      ],
+      "invariants": [
+        "should_continue ends the loop when iterations >= AGENT_MAX_ITER OR when all tracked hypotheses are resolved (non-'open'), whichever comes first.",
+        "Adding a new investigation domain requires only a new entry in INVESTIGATION_AREAS, not edits to agent.py's tool logic."
+      ],
+      "last_validated": "2026-08-03T02:43:16.420515+00:00",
+      "module": "splunk/agent.py",
+      "name": "standalone-agent-langgraph"
+    }
+  },
+  "meta": {
+    "updated_at": "2026-08-03T02:43:16.421208+00:00"
+  }
+}
