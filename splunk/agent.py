@@ -250,18 +250,23 @@ TOOLS = [summarise_findings, rank_hypotheses, request_deeper_analysis, format_re
 # Graph nodes
 # ---------------------------------------------------------------------------
 
-def agent_node(state: LogAnalysisState) -> dict:
-    iteration = state.get("iterations", 0) + 1
-    logger.debug("Agent iteration %d/%d", iteration, MAX_ITERATIONS)
-    backend = get_backend(config.AGENT_BACKEND, config.LLM_MODEL)
-    llm = backend.bind_tools(TOOLS)
-    response = llm.invoke(state["messages"])
-    tool_calls = getattr(response, "tool_calls", [])
-    logger.debug("Iteration %d — tool_calls: %s", iteration, [t["name"] for t in tool_calls])
-    return {
-        "messages": [response],
-        "iterations": iteration,
-    }
+def _make_agent_node(llm):
+    """llm is bound once per analyse() call (see _build_graph) and reused across every
+    ReAct iteration — for CLI backends this is what makes their session-resume behavior
+    work (one CLI session per investigation, not a fresh one per turn)."""
+
+    def agent_node(state: LogAnalysisState) -> dict:
+        iteration = state.get("iterations", 0) + 1
+        logger.debug("Agent iteration %d/%d", iteration, MAX_ITERATIONS)
+        response = llm.invoke(state["messages"])
+        tool_calls = getattr(response, "tool_calls", [])
+        logger.debug("Iteration %d — tool_calls: %s", iteration, [t["name"] for t in tool_calls])
+        return {
+            "messages": [response],
+            "iterations": iteration,
+        }
+
+    return agent_node
 
 
 def tool_node_fn(state: LogAnalysisState) -> dict:
@@ -340,25 +345,14 @@ def should_continue(state: LogAnalysisState) -> str:
 # Graph
 # ---------------------------------------------------------------------------
 
-def _build_graph() -> Any:
+def _build_graph(llm) -> Any:
     g = StateGraph(LogAnalysisState)
-    g.add_node("agent", agent_node)
+    g.add_node("agent", _make_agent_node(llm))
     g.add_node("tools", tool_node_fn)
     g.set_entry_point("agent")
     g.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
     g.add_edge("tools", "agent")
     return g.compile()
-
-
-_graph = None
-
-
-def _get_graph() -> Any:
-    global _graph
-    if _graph is None:
-        get_backend(config.AGENT_BACKEND, config.LLM_MODEL).check_available()
-        _graph = _build_graph()
-    return _graph
 
 
 # ---------------------------------------------------------------------------
@@ -370,11 +364,19 @@ def analyse(findings: dict[str, Any]) -> tuple[str, list[str]]:
     Run the ReAct agent over structured findings from detectors.
     Returns (markdown report, list of follow-up SPL query strings).
     """
+    model = {
+        "ollama": config.LLM_MODEL,
+        "claude_cli": config.CLAUDE_CLI_MODEL,
+        "copilot_cli": config.COPILOT_CLI_MODEL,
+    }.get(config.AGENT_BACKEND, config.LLM_MODEL)
     logger.info(
-        "Starting agent analysis — model=%s max_iter=%d event_count=%d",
-        config.LLM_MODEL, MAX_ITERATIONS, findings.get("event_count", 0),
+        "Starting agent analysis — backend=%s model=%s max_iter=%d event_count=%d",
+        config.AGENT_BACKEND, model, MAX_ITERATIONS, findings.get("event_count", 0),
     )
-    graph = _get_graph()
+    backend = get_backend(config.AGENT_BACKEND, model)
+    backend.check_available()
+    llm = backend.bind_tools(TOOLS)
+    graph = _build_graph(llm)
     findings_str = json.dumps(findings, default=str, indent=2)
 
     initial_state: LogAnalysisState = {

@@ -74,7 +74,8 @@ uv run python -m splunk.auth
 | `splunk/detectors.py` | `detect_spikes`, `detect_patterns`, `detect_cert_anomalies`, `correlate_events`, `detect_event_pairs`/`detect_event_pair_patterns`, `severity_summary`, `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies`, `detect_http_errors` |
 | `splunk/agent.py` | LangGraph ReAct graph, 5 tools, `analyse(findings) -> tuple[str, list[str]]` |
 | `splunk/investigation_areas.py` | Data-driven registry of investigation domains (prompt + SPL template per area) consumed by `agent.py`'s `request_deeper_analysis`/`generate_followup_queries` — add a domain here, not by editing `agent.py` |
-| `splunk/llm_backends.py` | Pluggable chat backend for `agent.py`'s ReAct loop, selected via `SPLUNK_AGENT_BACKEND`. Only `ollama` is implemented; `claude_cli`/`copilot_cli` are registered seams (raise `NotImplementedError`) since those CLIs are agentic and don't support the same tool-calling handshake as `ChatOllama` — see `splunk/llm_backends.py` module docstring |
+| `splunk/llm_backends.py` | Pluggable chat backend for `agent.py`'s ReAct loop, selected via `SPLUNK_AGENT_BACKEND`: `ollama` (native LangChain tool-calling via `ChatOllama`), or `claude_cli`/`copilot_cli` (shell to `claude -p`/`copilot -p` non-interactively, own tools disabled, hand-rolled JSON tool-call protocol — bridged into a LangChain-shaped `AIMessage` by `_CLIToolCallingModel`). One CLI session per `analyse()` call, resumed via `--resume` across ReAct iterations. Ported from `bee-bug-hunter`'s `claude_cli_llm.py`/`copilot_cli_llm.py`, trimmed (no multi-role session forking/disk persistence — single role, one-shot per investigation) |
+| `splunk/cli_tool_protocol.py` | CLI-agnostic half of the claude_cli/copilot_cli bridge — JSON tool-call extraction, tool-schema description, message flattening, new-message dedup. Shared by both CLI backends in `llm_backends.py` |
 | `splunk/client.py` | `run_query(spl)` → submit → poll → fetch → parse |
 | `splunk/auth.py` | Playwright SSO, extracts cookie → `~/.splunk/auth.json` |
 | `splunk/runner.py` | CLI entry point, `run_pipeline(df)`, `RunLogger`, DB store |
@@ -137,7 +138,9 @@ Override cookie name via `SPLUNK_COOKIE_NAME` env var.
 |-----|---------|---------|
 | `SPLUNK_URL` | — | Splunk base URL (required) |
 | `SPLUNK_LLM_MODEL` | `qwen2.5:14b` | Ollama model (only used with the `--investigate` flag, requires `--extra llm`) |
-| `SPLUNK_AGENT_BACKEND` | `ollama` | Chat backend for `agent.py`'s ReAct loop — `ollama`, `claude_cli` (not yet implemented), `copilot_cli` (not yet implemented) |
+| `SPLUNK_AGENT_BACKEND` | `ollama` | Chat backend for `agent.py`'s ReAct loop — `ollama`, `claude_cli` (shells to `claude -p`, needs `claude` on PATH + existing Claude Code login), `copilot_cli` (shells to `copilot -p`, needs `copilot` on PATH + existing login) |
+| `SPLUNK_CLAUDE_CLI_MODEL` | `sonnet` | Model passed to `claude -p --model` when `SPLUNK_AGENT_BACKEND=claude_cli` |
+| `SPLUNK_COPILOT_CLI_MODEL` | `claude-sonnet-4.5` | Model passed to `copilot -p --model` when `SPLUNK_AGENT_BACKEND=copilot_cli` |
 | `SPLUNK_AGENT_MAX_ITER` | `10` | ReAct loop cap (only used with the `--investigate` flag) |
 | `SPLUNK_SPIKE_THRESHOLD` | `10` | Events/window to trigger spike |
 | `SPLUNK_SPIKE_WINDOW` | `60` | Spike detection window (seconds) |

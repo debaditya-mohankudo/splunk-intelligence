@@ -3,24 +3,27 @@
     "llm-backend-seam": {
       "confidence": 0.8,
       "contracts": [
-        "LLMBackend.check_available() fails fast with a clear message if the backend can't be used right now (called once, lazily, from agent.py's _get_graph).",
-        "LLMBackend.bind_tools(tools) returns a LangChain-compatible runnable (.invoke(messages) -> AIMessage with .tool_calls) — this is the shape agent_node's ReAct loop requires.",
-        "get_backend(name, model) is the only public factory; unknown names raise ValueError listing valid choices."
+        "LLMBackend.check_available() fails fast with a clear message if the backend can't be used right now (missing binary, Ollama not running, model not pulled).",
+        "LLMBackend.bind_tools(tools) returns an object with .invoke(messages) -> AIMessage (with .tool_calls when the model wants to call a tool) -- this is the shape agent_node's ReAct loop requires, and it must be called exactly once per analyse() invocation then reused across every ReAct iteration (see agent.py's _build_graph/_make_agent_node), not once per iteration -- CLI backends rely on that single bound object surviving the whole loop to keep one --resume session alive instead of minting a fresh CLI session every turn.",
+        "get_backend(name, model) is the only public factory; unknown names raise ValueError listing valid choices.",
+        "For claude_cli/copilot_cli, tool schemas are described in the system prompt and the model is asked to reply with {\"tool\": name, \"args\": {...}} or {\"final_answer\": ...} -- _CLIToolCallingModel parses that JSON and translates it into a LangChain-shaped AIMessage so agent.py's graph doesn't need to know which backend is active."
       ],
       "created_at": "2026-08-03T02:48:55.229769+00:00",
-      "description": "Pluggable chat-backend abstraction for splunk/agent.py's LangGraph ReAct loop, selected via config.AGENT_BACKEND (SPLUNK_AGENT_BACKEND env var). Only 'ollama' is implemented; 'claude_cli'/'copilot_cli' are named seams that raise NotImplementedError rather than silently no-op.",
+      "description": "Pluggable chat-backend abstraction for splunk/agent.py's LangGraph ReAct loop, selected via config.AGENT_BACKEND (SPLUNK_AGENT_BACKEND env var). Three backends: 'ollama' (native LangChain tool-calling via ChatOllama), 'claude_cli' and 'copilot_cli' (shell to `claude -p`/`copilot -p` non-interactively with the CLI's own tool use disabled, bridging tool-calling by hand via a JSON protocol -- see splunk/cli_tool_protocol.py).",
       "evidence": [
-        "splunk/llm_backends.py:LLMBackend",
-        "splunk/llm_backends.py:OllamaBackend",
-        "splunk/llm_backends.py:_UnimplementedCLIBackend",
-        "splunk/agent.py:agent_node",
-        "splunk/agent.py:_get_graph",
+        "splunk/llm_backends.py:_CLIToolCallingModel",
+        "splunk/llm_backends.py:ClaudeCLIBackend",
+        "splunk/llm_backends.py:CopilotCLIBackend",
+        "splunk/cli_tool_protocol.py",
+        "splunk/agent.py:_build_graph",
+        "splunk/agent.py:_make_agent_node",
         "tests/test_llm_backends.py"
       ],
       "invariants": [
-        "Claude CLI and Copilot CLI cannot satisfy the bind_tools/invoke contract as-is because they are themselves agentic tools invoked non-interactively, not chat-completion APIs that emit structured tool calls. Any future implementation of those backends needs a different call path in agent.py (single-shot findings->report), not just filling in the stub class."
+        "Session state (self._session_id, self._sent_message_signatures on _CLIToolCallingModel) is scoped to one analyse() call and discarded after -- unlike bee-bug-hunter's disk-persisted multi-role session store, agent.py has a single role and analyse() is one-shot per investigation, so no cross-process persistence or session forking is needed here.",
+        "Claude CLI supports --append-system-prompt (system and user text sent separately); Copilot CLI does not and folds both into one combined -p argument -- this asymmetry is handled per-backend in llm_backends.py, not in the shared cli_tool_protocol.py."
       ],
-      "last_validated": "2026-08-03T02:48:55.229785+00:00",
+      "last_validated": "2026-08-03T02:56:18.888178+00:00",
       "module": "splunk/llm_backends.py",
       "name": "llm-backend-seam"
     },
@@ -51,6 +54,6 @@
     }
   },
   "meta": {
-    "updated_at": "2026-08-03T02:48:55.229847+00:00"
+    "updated_at": "2026-08-03T02:56:18.888287+00:00"
   }
 }
