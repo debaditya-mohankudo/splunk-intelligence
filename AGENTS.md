@@ -108,6 +108,11 @@ The MCP tools load the cookie automatically from `~/.splunk/auth.json` on every 
 
 Do not attempt to automate the SSO login or pass credentials directly — the browser step is intentional.
 
+### Before every live query
+
+1. Check the cookie file exists at `$SPLUNK_AUTH_PATH` (default `~/.splunk/auth.json`) before calling `splunk__investigate_start(spl=...)`. If missing, tell the user to run the one-time setup above first rather than attempting the live call. This only confirms a cookie was captured at some point, not that the session is still valid — an expired session is only discovered on the actual call (silently re-authed, up to 3 attempts).
+2. Confirm the configured `SPLUNK_URL` with the user before running the query — a live SPL query against the wrong Splunk instance is a silent wrong-environment mistake that no tool call will catch for you.
+
 ## Report format
 
 ```markdown

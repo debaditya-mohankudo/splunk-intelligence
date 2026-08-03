@@ -22,7 +22,7 @@ No server process required. Terminal UI for watching live progress (optional): `
 
 `<input>` — **mandatory**, one of:
 - File path: `results/cert_errors.json`, `results/ocsp.csv`
-- Live SPL: `"index=pki sourcetype=ocsp_error" --earliest -6h`
+- Live SPL: `"index=pki sourcetype=ocsp_error" --earliest -6h` (see Step 0 preflight below before running)
 
 If neither is given, ask the user for one before calling `splunk__investigate_start` —
 `source` or `spl` is required (`connector.py::start_investigation` returns
@@ -48,11 +48,36 @@ Every tool call is self-sufficient — `splunk__submit_report`'s own JSON result
 
 ---
 
+## Step 0 — Live SPL preflight (skip for file input)
+
+Only applies when `<input>` is a live SPL query, not a file path. Two checks before calling
+`splunk__investigate_start(spl=...)`:
+
+1. **Cached login.** Check the session cookie file exists at `$SPLUNK_AUTH_PATH` (default
+   `~/.splunk/auth.json`):
+   ```bash
+   ls ~/.splunk/auth.json
+   ```
+   If missing, tell the user to run `uv run python -m splunk.auth` first (opens a browser for
+   SSO login) rather than attempting the live call — it will fail deep in the REST client
+   otherwise. Note: this only confirms a cookie was captured at some point, not that the
+   session is still valid — an expired session still needs a live call to discover (client.py
+   silently re-auths on 401, up to 3 attempts).
+
+2. **Confirm the target instance.** Read the configured `SPLUNK_URL` (from `.env`/environment)
+   and show it to the user for confirmation before running the query — a live SPL query
+   against the wrong Splunk instance is a silent wrong-environment footgun, not something
+   any tool call will catch for you.
+
+Only proceed to Step 1 once both are confirmed.
+
+---
+
 ## Step 1 — Start the investigation
 
 ```python
 splunk__investigate_start(source="results/cert_errors.json")
-# OR for live query:
+# OR for live query (after Step 0 preflight):
 splunk__investigate_start(spl="index=pki sourcetype=ocsp_error", earliest="-6h")
 ```
 
