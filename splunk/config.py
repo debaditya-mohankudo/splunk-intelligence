@@ -27,6 +27,10 @@ class _Settings(BaseSettings):
 
     SPLUNK_INDEX: str = "*"
     SPLUNK_INVESTIGATOR_MAX_ITER: int = 3
+    # Comma-separated indexes relevant to this Splunk environment — reference
+    # context only, surfaced to the user during the live-SPL preflight
+    # (SKILL.md/AGENTS.md); does not change SPLUNK_INDEX or SPL generation.
+    SPLUNK_KNOWN_INDEXES: str = ""
 
     # Standalone LangGraph/Ollama agent (splunk/agent.py) — optional fallback
     # for environments without Copilot/Claude Code. Requires `uv sync --extra llm`.
@@ -67,6 +71,7 @@ _settings = _Settings()
 
 SPLUNK_INDEX: str = _settings.SPLUNK_INDEX
 INVESTIGATOR_MAX_ITER: int = _settings.SPLUNK_INVESTIGATOR_MAX_ITER
+KNOWN_INDEXES: list[str] = [i.strip() for i in _settings.SPLUNK_KNOWN_INDEXES.split(",") if i.strip()]
 
 LLM_MODEL: str = _settings.SPLUNK_LLM_MODEL
 AGENT_MAX_ITER: int = _settings.SPLUNK_AGENT_MAX_ITER

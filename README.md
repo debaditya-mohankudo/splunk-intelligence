@@ -210,6 +210,7 @@ or SSO. See `local_splunk/README.md` for setup/teardown steps.
 | --- | --- | --- |
 | `SPLUNK_URL` | — | Splunk base URL (required for live queries) |
 | `SPLUNK_INDEX` | `*` | Default index substituted into generated follow-up SPL (standalone agent path) |
+| `SPLUNK_KNOWN_INDEXES` | — | Comma-separated indexes relevant to your environment — reference only, surfaced to the user during the live-SPL preflight; doesn't affect `SPLUNK_INDEX` or generated SPL |
 | `SPLUNK_INVESTIGATOR_MAX_ITER` | `3` | MCP-driven investigation loop's iteration cap (primary path — `splunk__submit_report`) |
 | `SPLUNK_CORRELATE_WINDOW` | `60` | Event-pair correlation window (seconds) for `detect_event_pairs`/`detect_event_pair_patterns` |
 | `SPLUNK_SPIKE_THRESHOLD` | `10` | Events/window to trigger a spike |

@@ -50,7 +50,7 @@ Every tool call is self-sufficient — `splunk__submit_report`'s own JSON result
 
 ## Step 0 — Live SPL preflight (skip for file input)
 
-Only applies when `<input>` is a live SPL query, not a file path. Two checks before calling
+Only applies when `<input>` is a live SPL query, not a file path. Three checks before calling
 `splunk__investigate_start(spl=...)`:
 
 1. **Cached login.** Check the session cookie file exists at `$SPLUNK_AUTH_PATH` (default
@@ -69,7 +69,12 @@ Only applies when `<input>` is a live SPL query, not a file path. Two checks bef
    against the wrong Splunk instance is a silent wrong-environment footgun, not something
    any tool call will catch for you.
 
-Only proceed to Step 1 once both are confirmed.
+3. **Surface known indexes.** Read `SPLUNK_KNOWN_INDEXES` (from `.env`/environment) — if
+   non-empty, show the list to the user alongside the SPLUNK_URL confirmation so they can
+   pick/confirm the right index without recalling names from memory. This is reference
+   context only; it doesn't change what SPL gets run.
+
+Only proceed to Step 1 once all three are confirmed.
 
 ---
 
