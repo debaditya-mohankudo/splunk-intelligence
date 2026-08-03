@@ -83,6 +83,15 @@ class TestStartInvestigation:
         result = connector.start_investigation(source=str(dest), repo_path="/some/repo")
         assert result["repo_path"] == "/some/repo"
         assert "code_context" in result
+        assert "repo_path_nudge" not in result
+
+    def test_repo_path_omitted_carries_nudge(self, tmp_path):
+        dest = tmp_path / "cert_errors.json"
+        shutil.copy(FIXTURES / "cert_errors.json", dest)
+
+        result = connector.start_investigation(source=str(dest))
+        assert "repo_path_nudge" in result
+        assert "lsp_call_chain" in result["repo_path_nudge"]
 
     def test_multiple_concurrent_runs_allowed(self, tmp_path):
         # No singleton lock (the old FastAPI 409-on-concurrent-run behavior is
@@ -121,6 +130,27 @@ class TestSubmitReport:
         report = "## Report\n**Confidence:** Medium\n\nIncomplete."
         result = connector.submit_report(run_id, report, queries=[])
         assert result["status"] == "done"
+        assert "followup_nudge" in result
+        assert "confidence_nudge" in result
+
+    def test_high_confidence_done_has_no_nudges(self):
+        run_id = self._start()
+        report = "## Report\n**Confidence:** High\n\nFound root cause."
+        result = connector.submit_report(run_id, report, queries=["index=pki"])
+        assert result["status"] == "done"
+        assert "confidence_nudge" not in result
+        assert "followup_nudge" not in result
+
+    def test_no_new_events_done_has_confidence_nudge_but_not_followup(self):
+        run_id = self._start()
+        report = "## Report\n**Confidence:** Medium\n\nInvestigating."
+        with patch("splunk.connector._execute_queries", return_value=None):
+            result = connector.submit_report(run_id, report, queries=["index=pki"])
+        assert result["status"] == "done"
+        assert "confidence_nudge" in result
+        # queries were provided this time — followup_nudge is specific to the
+        # "no queries submitted" done-branch, not any done outcome.
+        assert "followup_nudge" not in result
 
     def test_max_iterations_returns_done(self):
         from splunk.config import INVESTIGATOR_MAX_ITER

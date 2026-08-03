@@ -39,6 +39,7 @@ from typing import Any
 
 import polars as pl
 
+from splunk import dispatcher
 from splunk.config import INVESTIGATOR_MAX_ITER
 from splunk.db import (
     clear_active_run_row,
@@ -171,21 +172,24 @@ def start_investigation(
             findings_json=json.dumps(findings, default=str),
         )
 
-        result: dict[str, Any] = {
-            "run_id": run_id,
-            "source": source_label,
-            "event_count": findings["event_count"],
-            "findings": json.loads(json.dumps(findings, default=str)),
-            "ui_url": f"Run: uv run python -m splunk.tui  (select run {run_id[:8]})",
-            "next": "Reason over these findings and call splunk__submit_report with your report and follow-up SPL queries.",
-        }
-        if repo_path:
-            result["repo_path"] = repo_path
-            result["code_context"] = "splunk__lsp_call_chain is available — use it to trace error log sites back through the call graph before writing follow-up queries."
+        with dispatcher.tool_called(
+            post=lambda result: dispatcher.apply_repo_path_nudge(result, repo_path)
+        ) as call:
+            call.result = {
+                "run_id": run_id,
+                "source": source_label,
+                "event_count": findings["event_count"],
+                "findings": json.loads(json.dumps(findings, default=str)),
+                "ui_url": f"Run: uv run python -m splunk.tui  (select run {run_id[:8]})",
+                "next": "Reason over these findings and call splunk__submit_report with your report and follow-up SPL queries.",
+            }
+            if repo_path:
+                call.result["repo_path"] = repo_path
+                call.result["code_context"] = "splunk__lsp_call_chain is available — use it to trace error log sites back through the call graph before writing follow-up queries."
 
-        with RunLogger(run_id) as log:
-            log.info("investigate.start", source=source_label, event_count=findings["event_count"], repo_path=repo_path or None)
-        return result
+            with RunLogger(run_id) as log:
+                log.info("investigate.start", source=source_label, event_count=findings["event_count"], repo_path=repo_path or None)
+            return call.result
 
     except Exception as exc:
         with RunLogger(run_id) as log:
@@ -219,51 +223,62 @@ def submit_report(run_id: str, report: str, queries: list[str] | None = None) ->
 
     ui_url = f"Run: uv run python -m splunk.tui  (select run {run_id[:8]})"
 
-    if _confidence_high(report) or iteration >= INVESTIGATOR_MAX_ITER or not queries:
-        clear_active_run_row(run_id)
-        _sessions.pop(run_id, None)
-        with RunLogger(run_id) as log:
-            log.info("investigate.done", confidence=confidence, iterations=iteration)
-        return {
-            "status": "done",
+    def _post(result: dict[str, Any]) -> None:
+        dispatcher.apply_confidence_nudge(result, result.get("status", ""), confidence)
+        if ended_on_no_queries:
+            dispatcher.apply_no_followup_nudge(result, result.get("status", ""), queries)
+
+    ended_on_no_queries = not queries
+
+    with dispatcher.tool_called(post=_post) as call:
+        if _confidence_high(report) or iteration >= INVESTIGATOR_MAX_ITER or not queries:
+            clear_active_run_row(run_id)
+            _sessions.pop(run_id, None)
+            with RunLogger(run_id) as log:
+                log.info("investigate.done", confidence=confidence, iterations=iteration)
+            call.result = {
+                "status": "done",
+                "run_id": run_id,
+                "confidence": confidence,
+                "iterations": iteration,
+                "ui_url": ui_url,
+            }
+            return call.result
+
+        new_df = _execute_queries(queries)
+        if new_df is None or new_df.height == 0:
+            clear_active_run_row(run_id)
+            _sessions.pop(run_id, None)
+            with RunLogger(run_id) as log:
+                log.info("investigate.done", confidence=confidence, iterations=iteration, reason="no new events from follow-up queries")
+            call.result = {
+                "status": "done",
+                "run_id": run_id,
+                "confidence": confidence,
+                "iterations": iteration,
+                "reason": "no new events from follow-up queries",
+                "ui_url": ui_url,
+            }
+            return call.result
+
+        new_df = _prepare_df(new_df)
+        df = pl.concat([session["df"], new_df], how="diagonal")
+        session["df"] = df
+        findings = _build_findings(df)
+        session["findings"] = findings
+        store_events(new_df, run_id)
+        upsert_active_run(run_id, events=df.height, findings_json=json.dumps(findings, default=str))
+
+        call.result = {
+            "status": "continue",
             "run_id": run_id,
+            "iteration": iteration,
             "confidence": confidence,
-            "iterations": iteration,
-            "ui_url": ui_url,
+            "event_count": findings["event_count"],
+            "findings": json.loads(json.dumps(findings, default=str)),
+            "next": "Reason over these findings and call splunk__submit_report again with your updated report and next follow-up queries.",
         }
-
-    new_df = _execute_queries(queries)
-    if new_df is None or new_df.height == 0:
-        clear_active_run_row(run_id)
-        _sessions.pop(run_id, None)
-        with RunLogger(run_id) as log:
-            log.info("investigate.done", confidence=confidence, iterations=iteration, reason="no new events from follow-up queries")
-        return {
-            "status": "done",
-            "run_id": run_id,
-            "confidence": confidence,
-            "iterations": iteration,
-            "reason": "no new events from follow-up queries",
-            "ui_url": ui_url,
-        }
-
-    new_df = _prepare_df(new_df)
-    df = pl.concat([session["df"], new_df], how="diagonal")
-    session["df"] = df
-    findings = _build_findings(df)
-    session["findings"] = findings
-    store_events(new_df, run_id)
-    upsert_active_run(run_id, events=df.height, findings_json=json.dumps(findings, default=str))
-
-    return {
-        "status": "continue",
-        "run_id": run_id,
-        "iteration": iteration,
-        "confidence": confidence,
-        "event_count": findings["event_count"],
-        "findings": json.loads(json.dumps(findings, default=str)),
-        "next": "Reason over these findings and call splunk__submit_report again with your updated report and next follow-up queries.",
-    }
+        return call.result
 
 
 def get_findings(run_id: str) -> dict[str, Any]:

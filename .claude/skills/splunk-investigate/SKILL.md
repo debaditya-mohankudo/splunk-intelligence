@@ -7,7 +7,7 @@ cwd: /Users/debaditya/workspace/splunk_analysis
 
 # Splunk Investigate
 
-Claude-session investigation loop via MCP tools. The PostToolUse hook in claude-hooks automatically injects next findings into the system prompt after each `splunk__submit_report` call — Claude loops without any manual intervention.
+Claude-session investigation loop via MCP tools. Each tool call is self-sufficient: `splunk__submit_report` returns `{status, findings, next}` directly in its own JSON result, so Claude sees the next findings on the next turn and loops without any manual intervention or external hook.
 
 ## Repo
 
@@ -20,10 +20,17 @@ No server process required. Terminal UI for watching live progress (optional): `
 /splunk-investigate <input>
 ```
 
-`<input>` is one of:
+`<input>` — **mandatory**, one of:
 - File path: `results/cert_errors.json`, `results/ocsp.csv`
 - Live SPL: `"index=pki sourcetype=ocsp_error" --earliest -6h`
-- Nothing — ask the user
+
+If neither is given, ask the user for one before calling `splunk__investigate_start` —
+`source` or `spl` is required (`connector.py::start_investigation` returns
+`{"error": "Provide 'source' (file path) or 'spl' (live SPL query)"}` otherwise).
+
+`repo_path` (optional) — path to the microservice source repo, enables
+`splunk__lsp_call_chain` for code cross-referencing. Omit to skip; the tool
+result will carry a `repo_path_nudge` reminding you it's unavailable this run.
 
 ---
 
@@ -32,12 +39,12 @@ No server process required. Terminal UI for watching live progress (optional): `
 ```
 splunk__investigate_start(source)   →  {run_id, findings}
 Claude reasons                      →  report + SPL queries
-splunk__submit_report(run_id, ...)  →  PostToolUse hook injects next findings automatically
+splunk__submit_report(run_id, ...)  →  {status: continue, findings, next}
 Claude reasons again                →  ...
 until: confidence=High | no new events | max 3 iterations
 ```
 
-The PostToolUse hook in claude-hooks fires after every `splunk__submit_report` call. It extracts the next findings from the tool result and injects them into `additionalSystemPrompt` — Claude sees them on the next turn and continues automatically.
+Every tool call is self-sufficient — `splunk__submit_report`'s own JSON result carries the next findings and a `next` instruction directly. Claude sees them on the next turn and continues automatically; no external hook process is involved.
 
 ---
 
@@ -120,12 +127,12 @@ splunk__submit_report(
 )
 ```
 
-**The PostToolUse hook automatically injects next findings into the system prompt.**  
-You will see them on the next turn — just continue reasoning and call `splunk__submit_report` again.
+**The tool's own JSON result carries the next findings** — no external hook needed.
+You will see them in the tool result on this turn — just continue reasoning and call `splunk__submit_report` again.
 
 Response is either:
-- `{status: "continue", findings: {...}}` → hook injects, Claude loops
-- `{status: "done", ui_url: "..."}` → investigation complete
+- `{status: "continue", findings: {...}, next: "..."}` → Claude reasons and loops
+- `{status: "done", ui_url: "...", confidence_nudge?: "...", followup_nudge?: "..."}` → investigation complete; check for advisory nudge keys before writing the final summary
 
 Fallback (if MCP server not running):
 ```bash
