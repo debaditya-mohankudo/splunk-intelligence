@@ -1,5 +1,5 @@
 """
-Pluggable LLM backend for splunk/agent.py's standalone ReAct loop.
+Pluggable LLM backend for standalone/agent.py's standalone ReAct loop.
 
 Selected via SPLUNK_AGENT_BACKEND (config.AGENT_BACKEND): "ollama" (default),
 "claude_cli", or "copilot_cli".

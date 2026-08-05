@@ -8,7 +8,7 @@ Code) has no self-scheduling mechanism, so continuous monitoring has to run
 server-side, independent of any agent session.
 
 Usage (run alongside splunk/mcp_server.py, same as splunk/tui.py):
-    uv run python -m splunk.watcher
+    uv run python -m standalone.watcher
 """
 from __future__ import annotations
 

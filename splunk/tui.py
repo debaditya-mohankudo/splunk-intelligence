@@ -793,7 +793,7 @@ class RunningScreen(CustomScreen):
         # Fail fast with a clear message instead of hanging on the first
         # analyse() call deep inside run_standalone_agent.
         try:
-            import splunk.agent  # noqa: F401
+            import standalone.agent  # noqa: F401
         except Exception as exc:
             status.set_status(
                 "failure",

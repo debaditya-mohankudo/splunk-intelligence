@@ -344,7 +344,7 @@ def run_standalone_agent(df: pl.DataFrame, run_id: str, source: str = "") -> tup
     TUI's launch flow depends on being able to see the run afterward."""
     import time
 
-    from splunk.agent import analyse
+    from standalone.agent import analyse
 
     df = _prepare_df(df)
     upsert_active_run(run_id, source=source, iteration=0, confidence="—", events=df.height)

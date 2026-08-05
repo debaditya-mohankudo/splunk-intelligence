@@ -1,5 +1,5 @@
 """
-Unit tests for splunk/agent.py's deterministic tool functions and
+Unit tests for standalone/agent.py's deterministic tool functions and
 splunk/investigation_areas.py's registry.
 
 Scoped to what's testable without Ollama running: the LangChain @tool-wrapped
@@ -14,7 +14,7 @@ import json
 
 from langchain_core.messages import AIMessage, ToolMessage
 
-from splunk import agent
+from standalone import agent
 from splunk.investigation_areas import INVESTIGATION_AREAS, get_prompt, get_spl_template
 
 

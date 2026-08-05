@@ -1,5 +1,5 @@
 """
-Data-driven registry of investigation "areas" used by splunk/agent.py's ReAct tools.
+Data-driven registry of investigation "areas" used by standalone/agent.py's ReAct tools.
 
 Each area is a single entry with everything needed for both `request_deeper_analysis`
 (a reasoning prompt) and `generate_followup_queries` (an SPL template). New domains are

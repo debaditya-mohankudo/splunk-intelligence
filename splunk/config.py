@@ -32,11 +32,11 @@ class _Settings(BaseSettings):
     # (SKILL.md/AGENTS.md); does not change SPLUNK_INDEX or SPL generation.
     SPLUNK_KNOWN_INDEXES: str = ""
 
-    # Standalone LangGraph/Ollama agent (splunk/agent.py) — optional fallback
+    # Standalone LangGraph/Ollama agent (standalone/agent.py) — optional fallback
     # for environments without Copilot/Claude Code. Requires `uv sync --extra llm`.
     SPLUNK_LLM_MODEL: str = "qwen2.5:14b"
     SPLUNK_AGENT_MAX_ITER: int = 10
-    # Chat backend driving the ReAct loop in splunk/agent.py: "ollama" (default),
+    # Chat backend driving the ReAct loop in standalone/agent.py: "ollama" (default),
     # "claude_cli", or "copilot_cli" (see splunk/llm_backends.py).
     SPLUNK_AGENT_BACKEND: str = "ollama"
     SPLUNK_CLAUDE_CLI_MODEL: str = "sonnet"
@@ -60,7 +60,7 @@ class _Settings(BaseSettings):
     SPLUNK_POLL_TIMEOUT: int = 300
     SPLUNK_MAX_REAUTH: int = 3
 
-    # Watcher (splunk/watcher.py) — standalone continuous-monitoring process
+    # Watcher (standalone/watcher.py) — standalone continuous-monitoring process
     SPLUNK_WATCH_SPL: str = ""
     SPLUNK_WATCH_INTERVAL: int = 60
     SPLUNK_WATCH_LOOKBACK: str = "-15m"
@@ -159,7 +159,7 @@ POLL_TIMEOUT: int = _settings.SPLUNK_POLL_TIMEOUT
 MAX_REAUTH_ATTEMPTS: int = _settings.SPLUNK_MAX_REAUTH
 
 # ---------------------------------------------------------------------------
-# Watcher (splunk/watcher.py) — standalone continuous-monitoring process
+# Watcher (standalone/watcher.py) — standalone continuous-monitoring process
 # ---------------------------------------------------------------------------
 
 WATCH_SPL: str = _settings.SPLUNK_WATCH_SPL

@@ -1,6 +1,6 @@
 """
 Unit tests for splunk/llm_backends.py — the pluggable chat-backend seam for
-splunk/agent.py's ReAct loop. No network calls, no real subprocess: httpx and
+standalone/agent.py's ReAct loop. No network calls, no real subprocess: httpx and
 subprocess.run are mocked; shutil.which is mocked so check_available/_invoke
 don't depend on `claude`/`copilot` actually being installed on the test host.
 """

@@ -253,7 +253,7 @@ def splunk__hint(run_id: str, hint: str) -> str:
 @mcp.tool()
 def splunk__check_alerts(severity: str = "") -> str:
     """
-    Read unacknowledged alerts written by the standalone watcher (splunk/watcher.py),
+    Read unacknowledged alerts written by the standalone watcher (standalone/watcher.py),
     which polls Splunk continuously and independently of any agent session.
 
     Args:

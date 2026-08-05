@@ -430,7 +430,7 @@ def query_events(run_id: str) -> pl.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Watcher — alerts + bookmark (splunk/watcher.py, splunk__check_alerts)
+# Watcher — alerts + bookmark (standalone/watcher.py, splunk__check_alerts)
 # ---------------------------------------------------------------------------
 
 def get_watch_bookmark() -> str | None:
