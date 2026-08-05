@@ -29,9 +29,9 @@ package Requirements {
             "splunk/parsers.py",
             "splunk/config.py",
             "splunk/connector.py",
-            "splunk/agent.py",
+            "standalone/agent.py",
             "splunk/cli_tool_protocol.py",
-            "splunk/watcher.py",
+            "standalone/watcher.py",
             "splunk/db.py",
             "splunk/mcp_server.py",
             "splunk/client.py",
@@ -86,7 +86,7 @@ package Requirements {
     satisfy requirement DataFrameBoundaryRequirement by system.orchestrator;
 
     requirement def AgentFindingsOnlyRequirement {
-        doc /* Source: splunk/agent.py. AgentLoop receives a findings
+        doc /* Source: standalone/agent.py. AgentLoop receives a findings
              * dict and never touches a raw event or a DataFrame directly
              * — it imports InvestigationAreaRegistry and LLMBackendSeam,
              * not DetectionCore. Keeps the standalone agent's reasoning
@@ -142,7 +142,7 @@ package Requirements {
     satisfy requirement RunStateMachineRequirement by system.orchestrator;
 
     requirement def WatcherNoGapRequirement {
-        doc /* Source: splunk/watcher.py:_next_earliest. Each poll cycle's
+        doc /* Source: standalone/watcher.py:_next_earliest. Each poll cycle's
              * earliest time is the previous bookmark minus an overlap
              * window, "so sliding-window detectors don't miss events
              * straddling the previous poll cycle's boundary" — an

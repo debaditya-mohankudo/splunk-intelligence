@@ -33,14 +33,14 @@
         "For claude_cli/copilot_cli, tool schemas are described in the system prompt and the model is asked to reply with {\"tool\": name, \"args\": {...}} or {\"final_answer\": ...} -- _CLIToolCallingModel parses that JSON and translates it into a LangChain-shaped AIMessage so agent.py's graph doesn't need to know which backend is active."
       ],
       "created_at": "2026-08-03T02:48:55.229769+00:00",
-      "description": "Pluggable chat-backend abstraction for splunk/agent.py's LangGraph ReAct loop, selected via config.AGENT_BACKEND (SPLUNK_AGENT_BACKEND env var). Three backends: 'ollama' (native LangChain tool-calling via ChatOllama), 'claude_cli' and 'copilot_cli' (shell to `claude -p`/`copilot -p` non-interactively with the CLI's own tool use disabled, bridging tool-calling by hand via a JSON protocol -- see splunk/cli_tool_protocol.py).",
+      "description": "Pluggable chat-backend abstraction for standalone/agent.py's LangGraph ReAct loop, selected via config.AGENT_BACKEND (SPLUNK_AGENT_BACKEND env var). Three backends: 'ollama' (native LangChain tool-calling via ChatOllama), 'claude_cli' and 'copilot_cli' (shell to `claude -p`/`copilot -p` non-interactively with the CLI's own tool use disabled, bridging tool-calling by hand via a JSON protocol -- see splunk/cli_tool_protocol.py).",
       "evidence": [
         "splunk/llm_backends.py:_CLIToolCallingModel",
         "splunk/llm_backends.py:ClaudeCLIBackend",
         "splunk/llm_backends.py:CopilotCLIBackend",
         "splunk/cli_tool_protocol.py",
-        "splunk/agent.py:_build_graph",
-        "splunk/agent.py:_make_agent_node",
+        "standalone/agent.py:_build_graph",
+        "standalone/agent.py:_make_agent_node",
         "tests/test_llm_backends.py"
       ],
       "invariants": [
@@ -62,9 +62,9 @@
       "created_at": "2026-08-03T02:43:16.420467+00:00",
       "description": "LangGraph ReAct agent (Qwen2.5 via Ollama) used only behind the --investigate CLI flag / connector.py's run_standalone_agent path — the fallback investigation loop for environments without Copilot/Claude driving MCP directly. Reasons over detector findings via a small tool set and emits a markdown report through format_report.",
       "evidence": [
-        "splunk/agent.py:LogAnalysisState",
-        "splunk/agent.py:tool_node_fn",
-        "splunk/agent.py:should_continue",
+        "standalone/agent.py:LogAnalysisState",
+        "standalone/agent.py:tool_node_fn",
+        "standalone/agent.py:should_continue",
         "splunk/investigation_areas.py:INVESTIGATION_AREAS",
         "tests/test_agent.py"
       ],
@@ -73,7 +73,7 @@
         "Adding a new investigation domain requires only a new entry in INVESTIGATION_AREAS, not edits to agent.py's tool logic."
       ],
       "last_validated": "2026-08-03T02:43:16.420515+00:00",
-      "module": "splunk/agent.py",
+      "module": "standalone/agent.py",
       "name": "standalone-agent-langgraph"
     },
     "tool-call-dispatcher": {

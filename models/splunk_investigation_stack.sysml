@@ -62,11 +62,11 @@ package SplunkInvestigationStack {
             "splunk/tui.py",
             "splunk/client.py",
             "splunk/auth.py",
-            "splunk/agent.py",
+            "standalone/agent.py",
             "splunk/llm_backends.py",
             "splunk/cli_tool_protocol.py",
             "splunk/investigation_areas.py",
-            "splunk/watcher.py",
+            "standalone/watcher.py",
             "splunk/thread_saturation.py"
         );
     }
@@ -172,7 +172,7 @@ package SplunkInvestigationStack {
     }
 
     part def AgentLoop {
-        doc /* splunk/agent.py. Optional standalone LangGraph ReAct agent
+        doc /* standalone/agent.py. Optional standalone LangGraph ReAct agent
              * (--investigate flag) — an alternative reasoning loop to the
              * MCP/Copilot path. Receives a findings dict, never raw
              * events or a DataFrame (CLAUDE.md — "Agent lives in agent.py
@@ -184,8 +184,8 @@ package SplunkInvestigationStack {
     }
 
     part def Watcher {
-        doc /* splunk/watcher.py. Standalone long-running process
-             * (`python -m splunk.watcher`) polling Splunk on an interval,
+        doc /* standalone/watcher.py. Standalone long-running process
+             * (`python -m standalone.watcher`) polling Splunk on an interval,
              * running a detector subset, and writing hits into
              * Persistence's `alerts` table with a sliding bookmark
              * (`watcher_state`) so poll-window boundaries don't drop
