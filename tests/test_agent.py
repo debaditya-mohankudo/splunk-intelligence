@@ -1,175 +1,111 @@
 """
-Unit tests for standalone/agent.py's deterministic tool functions and
-splunk/investigation_areas.py's registry.
+Unit tests for standalone/agent.py's NOOA-based LogAnalysisAgent deterministic
+methods (ollama backend only — see standalone/agent_cli_bridge.py for
+claude_cli/copilot_cli, tested separately in tests/test_agent_cli_bridge.py).
 
-Scoped to what's testable without Ollama running: the LangChain @tool-wrapped
-functions are plain deterministic functions under the decorator (invoke via
-.func(...) to bypass the tool-calling machinery), plus tool_node_fn's/
-should_continue's state-merging logic exercised directly against
-LogAnalysisState dicts. No graph invocation, no LLM calls.
+Scoped to what's testable without an LLM: constructs the agent class with a
+throwaway llm object (never invoked, since we only exercise plain methods
+directly — no .investigate() call, no CodeAct loop, no network).
 """
 from __future__ import annotations
 
-import json
+from nooa.unifiedllm.fake import FakeLLMClient
 
-from langchain_core.messages import AIMessage, ToolMessage
+from standalone.agent import _build_agent_class
 
-from standalone import agent
-from splunk.investigation_areas import INVESTIGATION_AREAS, get_prompt, get_spl_template
+_AGENT_CLASS = _build_agent_class(llm=FakeLLMClient())
 
 
-class TestInvestigationAreasRegistry:
-    def test_get_prompt_known_area(self):
-        assert "4xx/5xx" in get_prompt("api_errors")
+def _agent(findings=None):
+    return _AGENT_CLASS(findings or {})
 
-    def test_get_prompt_unknown_area_falls_back(self):
-        assert get_prompt("some_new_domain") == "Investigate 'some_new_domain' in detail using the available findings."
 
-    def test_get_spl_template_known_area(self):
-        tmpl = get_spl_template("host_isolation")
-        assert tmpl is not None
-        assert "{index}" in tmpl
+class TestSummariseFindings:
+    def test_no_findings(self):
+        assert _agent().summarise_findings() == "No significant findings."
 
-    def test_get_spl_template_unknown_area_is_none(self):
-        assert get_spl_template("nonexistent") is None
-
-    def test_first_occurrence_is_query_only(self):
-        # Documented asymmetry: first_occurrence has a template but no bespoke prompt.
-        assert "spl_template" in INVESTIGATION_AREAS["first_occurrence"]
-        assert "prompt" not in INVESTIGATION_AREAS["first_occurrence"]
-        assert get_prompt("first_occurrence").startswith("Investigate 'first_occurrence'")
+    def test_spikes_and_severity(self):
+        a = _agent({
+            "spikes": [{"window_start": "t0", "event_count": 5, "window_seconds": 60, "hosts": ["h1"]}],
+            "severity": {"error": 3},
+        })
+        result = a.summarise_findings()
+        assert "1 frequency spike(s)" in result
+        assert "h1" in result
+        assert "Severity breakdown" in result
 
 
 class TestRequestDeeperAnalysis:
-    def test_uses_registry(self):
-        result = agent.request_deeper_analysis.func("database_slowdown")
-        assert result == get_prompt("database_slowdown")
+    def test_known_area(self):
+        from splunk.investigation_areas import get_prompt
+
+        assert _agent().request_deeper_analysis("database_slowdown") == get_prompt("database_slowdown")
 
     def test_unknown_area_generic_fallback(self):
-        result = agent.request_deeper_analysis.func("made_up_area")
-        assert "made_up_area" in result
+        assert "made_up_area" in _agent().request_deeper_analysis("made_up_area")
 
 
 class TestGenerateFollowupQueries:
     def test_generates_query_for_known_area(self):
-        result = agent.generate_followup_queries.func(
-            hosts="host1,host2",
-            error_codes="500",
-            sourcetype="access",
-            spike_start="2026-08-01T00:00:00",
-            areas="host_isolation",
+        a = _agent()
+        result = a.generate_followup_queries(
+            hosts=["host1", "host2"], error_codes=["500"], sourcetype="access",
+            spike_start="2026-08-01T00:00:00", areas=["host_isolation"],
         )
         assert "host_isolation" in result
         assert "host1" in result
+        assert a.followup_queries == [result]
 
     def test_unknown_area_produces_no_queries(self):
-        result = agent.generate_followup_queries.func(
-            hosts="host1",
-            error_codes="500",
-            sourcetype="access",
-            spike_start="2026-08-01T00:00:00",
-            areas="not_a_real_area",
+        a = _agent()
+        result = a.generate_followup_queries(
+            hosts=["host1"], error_codes=["500"], sourcetype="access",
+            spike_start="2026-08-01T00:00:00", areas=["not_a_real_area"],
         )
         assert result == "No queries generated — check area names."
+        assert a.followup_queries == []
 
 
 class TestRankHypotheses:
     def test_registers_string_hypotheses(self):
-        result = agent.rank_hypotheses.func(json.dumps(["disk full", "network partition"]))
+        a = _agent()
+        result = a.rank_hypotheses(["disk full", "network partition"])
         assert "disk full" in result
         assert "network partition" in result
+        assert [h["claim"] for h in a.hypotheses] == ["disk full", "network partition"]
+        assert all(h["status"] == "open" for h in a.hypotheses)
 
-    def test_invalid_json(self):
-        assert agent.rank_hypotheses.func("not json") == "Invalid JSON list of hypotheses."
+    def test_dedupes_existing_claims(self):
+        a = _agent()
+        a.rank_hypotheses(["disk full"])
+        a.rank_hypotheses(["disk full", "network partition"])
+        assert [h["claim"] for h in a.hypotheses] == ["disk full", "network partition"]
+
+    def test_no_hypotheses(self):
+        assert _agent().rank_hypotheses([]) == "No hypotheses registered."
 
 
-class TestToolNodeFnHypothesisTracking:
-    """Exercises tool_node_fn's state-merging logic directly, without a live LangGraph run."""
-
-    def _state_with_tool_call(self, tool_name: str, args: dict, tool_call_id="call_1"):
-        ai_msg = AIMessage(
-            content="",
-            tool_calls=[{"name": tool_name, "args": args, "id": tool_call_id}],
+class TestFormatReport:
+    def test_confirms_hypothesis_and_rejects_others(self):
+        a = _agent()
+        a.rank_hypotheses(["disk full", "network partition"])
+        report = a.format_report(
+            summary="s", root_cause="disk full", confidence="High",
+            affected_hosts=["h1"], timeline="t", next_steps=["check disk"],
+            confirmed_hypothesis="disk full",
         )
-        return {
-            "messages": [ai_msg],
-            "findings": {},
-            "report": "",
-            "followup_queries": [],
-            "iterations": 1,
-            "hypotheses": [],
-        }
-
-    def test_rank_hypotheses_populates_state(self, monkeypatch):
-        from langgraph.prebuilt import ToolNode
-
-        state = self._state_with_tool_call(
-            "rank_hypotheses", {"hypotheses_json": json.dumps(["disk full"])}
-        )
-
-        def fake_invoke(self, state):
-            return {"messages": [ToolMessage(content="ranked", name="rank_hypotheses", tool_call_id="call_1")]}
-
-        monkeypatch.setattr(ToolNode, "invoke", fake_invoke)
-        result = agent.tool_node_fn(state)
-        assert result["hypotheses"] == [{"claim": "disk full", "area": "", "evidence": "", "status": "open"}]
-
-    def test_format_report_confirms_hypothesis_and_rejects_others(self, monkeypatch):
-        from langgraph.prebuilt import ToolNode
-
-        state = self._state_with_tool_call(
-            "format_report",
-            {
-                "summary": "s", "root_cause": "disk full", "confidence": "High",
-                "affected_hosts": "h1", "timeline": "t", "next_steps": "check disk",
-                "confirmed_hypothesis": "disk full",
-            },
-        )
-        state["hypotheses"] = [
-            {"claim": "disk full", "area": "", "evidence": "", "status": "open"},
-            {"claim": "network partition", "area": "", "evidence": "", "status": "open"},
-        ]
-
-        def fake_invoke(self, state):
-            return {"messages": [ToolMessage(content="# report", name="format_report", tool_call_id="call_1")]}
-
-        monkeypatch.setattr(ToolNode, "invoke", fake_invoke)
-        result = agent.tool_node_fn(state)
-        statuses = {h["claim"]: h["status"] for h in result["hypotheses"]}
+        statuses = {h["claim"]: h["status"] for h in a.hypotheses}
         assert statuses == {"disk full": "confirmed", "network partition": "rejected"}
-        assert result["report"] == "# report"
+        assert a.report == report
+        assert "disk full" in report
+        assert "check disk" in report
+        assert "h1" in report
 
-
-class TestShouldContinue:
-    def _base_state(self, **overrides):
-        state = {
-            "messages": [AIMessage(content="done", tool_calls=[])],
-            "findings": {},
-            "report": "",
-            "followup_queries": [],
-            "iterations": 1,
-            "hypotheses": [],
-        }
-        state.update(overrides)
-        return state
-
-    def test_ends_when_all_hypotheses_resolved(self):
-        state = self._base_state(
-            messages=[AIMessage(content="", tool_calls=[{"name": "x", "args": {}, "id": "1"}])],
-            hypotheses=[{"claim": "a", "area": "", "evidence": "", "status": "confirmed"}],
+    def test_no_confirmed_hypothesis_leaves_them_open(self):
+        a = _agent()
+        a.rank_hypotheses(["disk full"])
+        a.format_report(
+            summary="s", root_cause="unclear", confidence="Low",
+            affected_hosts=[], timeline="t", next_steps=[],
         )
-        assert agent.should_continue(state) == agent.END
-
-    def test_continues_when_hypothesis_open_and_tool_call_pending(self):
-        state = self._base_state(
-            messages=[AIMessage(content="", tool_calls=[{"name": "x", "args": {}, "id": "1"}])],
-            hypotheses=[{"claim": "a", "area": "", "evidence": "", "status": "open"}],
-        )
-        assert agent.should_continue(state) == "tools"
-
-    def test_max_iterations_forces_end(self):
-        state = self._base_state(
-            iterations=agent.MAX_ITERATIONS,
-            messages=[AIMessage(content="", tool_calls=[{"name": "x", "args": {}, "id": "1"}])],
-        )
-        assert agent.should_continue(state) == agent.END
+        assert a.hypotheses[0]["status"] == "open"

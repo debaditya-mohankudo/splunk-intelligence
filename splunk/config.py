@@ -37,10 +37,11 @@ class _Settings(BaseSettings):
     SPLUNK_LLM_MODEL: str = "qwen2.5:14b"
     SPLUNK_AGENT_MAX_ITER: int = 10
     # Chat backend driving the ReAct loop in standalone/agent.py: "ollama" (default),
-    # "claude_cli", or "copilot_cli" (see splunk/llm_backends.py).
+    # "claude_cli", "copilot_cli", or "apple_fm" (opt-in, see splunk/llm_backends.py).
     SPLUNK_AGENT_BACKEND: str = "ollama"
     SPLUNK_CLAUDE_CLI_MODEL: str = "sonnet"
     SPLUNK_COPILOT_CLI_MODEL: str = "claude-sonnet-4.5"
+    SPLUNK_APPLE_FM_MODEL: str = "afm-3-core"
 
     # Detector thresholds
     SPLUNK_SPIKE_WINDOW: int = 60
@@ -78,6 +79,7 @@ AGENT_MAX_ITER: int = _settings.SPLUNK_AGENT_MAX_ITER
 AGENT_BACKEND: str = _settings.SPLUNK_AGENT_BACKEND
 CLAUDE_CLI_MODEL: str = _settings.SPLUNK_CLAUDE_CLI_MODEL
 COPILOT_CLI_MODEL: str = _settings.SPLUNK_COPILOT_CLI_MODEL
+APPLE_FM_MODEL: str = _settings.SPLUNK_APPLE_FM_MODEL
 
 # ---------------------------------------------------------------------------
 # PKI / cert field names — static defaults, no env var
