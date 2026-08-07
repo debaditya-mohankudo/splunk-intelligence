@@ -372,6 +372,7 @@ def analyse_via_cli_bridge(findings: dict[str, Any]) -> tuple[str, list[str]]:
     model = {
         "claude_cli": config.CLAUDE_CLI_MODEL,
         "copilot_cli": config.COPILOT_CLI_MODEL,
+        "apple_fm": config.APPLE_FM_MODEL,
     }[config.AGENT_BACKEND]
     logger.info(
         "Starting agent analysis — backend=%s model=%s max_iter=%d event_count=%d",
