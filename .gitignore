@@ -10,3 +10,4 @@ reports/
 *.sqlite
 logs/
 snapshot_report.html
+tools/afm-cli/.build/

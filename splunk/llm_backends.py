@@ -2,7 +2,7 @@
 Pluggable LLM backend for standalone/agent.py's standalone ReAct loop.
 
 Selected via SPLUNK_AGENT_BACKEND (config.AGENT_BACKEND): "ollama" (default),
-"claude_cli", or "copilot_cli".
+"claude_cli", "copilot_cli", or "apple_fm" (opt-in, see AppleFoundationModelBackend).
 
 Ollama plugs into LangGraph's native tool-calling (ChatOllama.bind_tools/invoke
 returns an AIMessage with .tool_calls). Claude CLI / Copilot CLI are themselves
@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import uuid
 from abc import ABC, abstractmethod
+from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -273,10 +274,82 @@ class CopilotCLIBackend(LLMBackend):
         return result_text, returned_session_id
 
 
+class _AppleFMToolCallingModel:
+    """.invoke(messages) -> AIMessage bound to a stateless afm-cli subprocess.
+
+    Unlike _CLIToolCallingModel's claude/copilot sessions, afm-cli has no
+    --resume flag — each call is a cold LanguageModelSession — so this resends
+    the full flattened history every turn instead of diffing against what was
+    previously sent.
+    """
+
+    def __init__(self, afm_cli_path: str, tools: list):
+        self._afm_cli_path = afm_cli_path
+        self._tools = tools
+
+    def invoke(self, messages: list) -> AIMessage:
+        system_prompt, prompt = flatten_messages(messages)
+        if self._tools:
+            system_prompt = (
+                system_prompt + "\n\n" +
+                TOOL_PROTOCOL_INSTRUCTIONS.format(tool_descriptions=describe_tools(self._tools))
+            )
+
+        cmd = [self._afm_cli_path]
+        if system_prompt:
+            cmd += ["--system", system_prompt]
+        proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=CLI_TIMEOUT_SECONDS)
+        if proc.returncode != 0:
+            raise RuntimeError(f"afm-cli exited {proc.returncode}: {proc.stderr.strip()}")
+        raw = proc.stdout.strip()
+
+        parsed = extract_json_object(raw)
+        if parsed and "tool" in parsed:
+            return AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": parsed["tool"],
+                    "args": parsed.get("args", {}),
+                    "id": f"call_{uuid.uuid4().hex[:8]}",
+                    "type": "tool_call",
+                }],
+            )
+        text = parsed["final_answer"] if parsed and "final_answer" in parsed else raw
+        if not isinstance(text, str):
+            text = json.dumps(text)
+        return AIMessage(content=text)
+
+
+class AppleFoundationModelBackend(LLMBackend):
+    """Shells to afm-cli, a small Swift binary wrapping Apple's on-device
+    FoundationModels framework (macOS 26+, AFM 3 Core — 3B params). Opt-in
+    test backend alongside ollama/claude_cli/copilot_cli; no proven
+    multi-step tool-calling track record like the qwen models used by
+    default, so this is not wired in as the default."""
+
+    _CLI_RELATIVE_PATH = "tools/afm-cli/.build/release/afm-cli"
+
+    def __init__(self, model: str = "afm-3-core"):
+        self.model = model
+        repo_root = Path(__file__).resolve().parent.parent
+        self._cli_path = str(repo_root / self._CLI_RELATIVE_PATH)
+
+    def check_available(self) -> None:
+        if not Path(self._cli_path).exists():
+            raise RuntimeError(
+                f"apple_fm backend: {self._cli_path} not found. Build it with:\n"
+                f"  cd tools/afm-cli && swift build -c release"
+            )
+
+    def bind_tools(self, tools: list) -> Any:
+        return _AppleFMToolCallingModel(self._cli_path, tools)
+
+
 _BACKENDS = {
     "ollama": OllamaBackend,
     "claude_cli": ClaudeCLIBackend,
     "copilot_cli": CopilotCLIBackend,
+    "apple_fm": AppleFoundationModelBackend,
 }
 
 

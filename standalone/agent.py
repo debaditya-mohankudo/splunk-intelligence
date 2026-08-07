@@ -364,6 +364,7 @@ def analyse(findings: dict[str, Any]) -> tuple[str, list[str]]:
         "ollama": config.LLM_MODEL,
         "claude_cli": config.CLAUDE_CLI_MODEL,
         "copilot_cli": config.COPILOT_CLI_MODEL,
+        "apple_fm": config.APPLE_FM_MODEL,
     }.get(config.AGENT_BACKEND, config.LLM_MODEL)
     logger.info(
         "Starting agent analysis — backend=%s model=%s max_iter=%d event_count=%d",

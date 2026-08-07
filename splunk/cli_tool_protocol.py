@@ -68,14 +68,18 @@ def find_balanced_json_objects(text: str) -> list[str]:
 def extract_json_object(text: str) -> dict | None:
     text = text.strip()
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        if isinstance(parsed, dict):
+            return parsed
     except json.JSONDecodeError:
         pass
 
     fence_match = CODE_FENCE_PATTERN.search(text)
     if fence_match:
         try:
-            return json.loads(fence_match.group(1))
+            parsed = json.loads(fence_match.group(1))
+            if isinstance(parsed, dict):
+                return parsed
         except json.JSONDecodeError:
             pass
 
