@@ -235,6 +235,9 @@ or SSO. See `local_splunk/README.md` for setup/teardown steps.
 
 Put these in a `.env` file at the repo root (gitignored).
 
+## Project Planning
+Epic planning, subtask creation, task grooming, task implementation using https://github.com/debaditya-mohankudo/Lite-Task-Framework
+
 ## Agent instructions
 
 - **GitHub Copilot** — see [AGENTS.md](AGENTS.md) for loop rules, MCP tool reference, and report format
