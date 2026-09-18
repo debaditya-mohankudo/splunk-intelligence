@@ -1,0 +1,92 @@
+{
+  "meta": {
+    "note": "Ubiquitous-language ontology for this repo's domain: the vocabulary an investigation embodies, and the explicit typed relations between terms (is-a, part-of, relates, persists, references, describes, determines). Deliberately separate from concept_store/concepts.json -- that store is architecture PER MODULE (one summary per file) and answers 'what does this module promise'. This file is vocabulary PER DOMAIN TERM and answers 'what is this thing, and what is it to the others' -- a term here can span several modules, and a module can define several terms. Ground truth is still the code; this is a durable, human-readable map of the graph rather than N separate summaries. Modelled on ACME_Cert_Life_Cycle_Agent_By_Claude_Cowork/ontology/acme-cert-lifecycle-domain.json.",
+    "repo": "splunk_analysis",
+    "created_at": "2026-09-18"
+  },
+  "bounded_contexts": {
+    "Detection": "Deterministic, pure computation over raw events -- detectors and the Findings they produce. No interpretation, no reasoning, no reference to a specific investigation's narrative.",
+    "Reasoning": "Interpreting Findings into a rated candidate root cause: Hypothesis, Evidence, Confidence Level. This is what an investigator (human or agent) does inside each loop iteration, distinct from the mechanical MCP call sequence in docs/investigation-loop.md.",
+    "Follow-up Inquiry": "Turning an open Hypothesis into a scoped, executable next query -- Investigation Areas and their SPL templates.",
+    "Reporting": "The artifact and outcome an investigator hands to a human: the Report and the Root Cause it settles on.",
+    "Run Lifecycle": "The mechanical state a single investigation occupies over time -- active/paused/done -- independent of what's being reasoned about inside it."
+  },
+  "terms": {
+    "Run": {
+      "bounded_context": "Run Lifecycle",
+      "definition": "One investigation, from investigate_start to a terminal status:done. Identified by run_id; carries iteration count, the current Finding set, and optionally a repo_path for code cross-referencing. State is inferred from active_runs row presence plus a pause_requested flag, not an explicit status enum.",
+      "evidence": "splunk/db.py:active_runs, splunk/connector.py:start_investigation, models/run_lifecycle.sysml"
+    },
+    "Detector": {
+      "bounded_context": "Detection",
+      "definition": "A pure, deterministic function over the event DataFrame that produces one slice of Finding: detect_spikes, detect_patterns, detect_cert_anomalies, correlate_events, severity_summary, host_error_ranking, detect_slow_queries, detect_numeric_anomalies. Detectors never reason -- they compute counts, ranks, thresholds.",
+      "evidence": "splunk/detectors.py"
+    },
+    "Finding": {
+      "bounded_context": "Detection",
+      "definition": "The dict returned by a Run's detectors for the current iteration -- the only evidence an investigator is allowed to reason over. Raw, not yet interpreted: host_ranking says which hosts have more errors, not why. Referencing a host, field, or timestamp not present in Finding is out of bounds at every later step.",
+      "evidence": "splunk/investigator.py:_build_findings"
+    },
+    "Hypothesis": {
+      "bounded_context": "Reasoning",
+      "definition": "A candidate root cause stated in the Report, backed by cited Evidence drawn from Finding. Re-evaluated each iteration against new Finding data rather than replaced with an unrelated one; an empty follow-up result is itself Evidence against it.",
+      "evidence": "splunk/investigator.py:_confidence_high, .claude/skills/splunk-investigate/SKILL.md"
+    },
+    "Evidence": {
+      "bounded_context": "Reasoning",
+      "definition": "A specific, cited fact drawn from a Finding field (a host name, error code, timestamp, spike magnitude) that supports or rules out a Hypothesis. Evidence must be traceable to a Finding field -- invented Evidence invalidates the Hypothesis it's attached to.",
+      "evidence": ".claude/skills/splunk-investigate/SKILL.md"
+    },
+    "ConfidenceLevel": {
+      "bounded_context": "Reasoning",
+      "definition": "A three-value rubric (High/Medium/Low) rating a Hypothesis. High requires signal consistent across multiple independent detectors; Medium is partial or single-detector agreement; Low is the ceiling whenever event_count < 50, regardless of how consistent the signal looks.",
+      "evidence": ".claude/skills/splunk-investigate/SKILL.md, splunk/investigator.py:_confidence_high"
+    },
+    "InvestigationArea": {
+      "bounded_context": "Follow-up Inquiry",
+      "definition": "A named domain of follow-up inquiry pairing a reasoning prompt with an SPL query template: api_errors, database_slowdown, cascading_failure, host_isolation, timeline, first_occurrence, plus cert-specific ocsp/crl driven by cert_anomalies. The vocabulary for turning a Hypothesis into 'what to look at next.'",
+      "evidence": "splunk/investigation_areas.py"
+    },
+    "FollowupQuery": {
+      "bounded_context": "Follow-up Inquiry",
+      "definition": "Concrete SPL scoped to one InvestigationArea, using only fields/values already present in Finding -- no invented hosts, indexes, or error codes. Submitted alongside the Report; its results become the next iteration's Finding.",
+      "evidence": ".claude/skills/splunk-investigate/SKILL.md"
+    },
+    "Report": {
+      "bounded_context": "Reporting",
+      "definition": "The Markdown artifact an investigator produces each iteration: Summary, Root Cause Hypothesis, Confidence, Affected Hosts, Timeline, Recommended Next Steps. Submitted via submit_report together with the next round of FollowupQuery.",
+      "evidence": ".claude/skills/splunk-investigate/SKILL.md, splunk/connector.py:submit_report"
+    },
+    "RootCause": {
+      "bounded_context": "Reporting",
+      "definition": "The specific Hypothesis a Run terminates on -- the one that reached High ConfidenceLevel, or the best-supported one when the Run is forced to terminate by an iteration/event-count limit without reaching High. Every RootCause is a Hypothesis; not every Hypothesis becomes one.",
+      "evidence": "splunk/connector.py:submit_report"
+    }
+  },
+  "relations": [
+    {"subject": "Finding", "predicate": "part-of", "object": "Run",
+     "note": "Produced fresh each iteration by that Run's detectors and held as its current findings; no standalone identity outside the Run that produced it."},
+    {"subject": "Detector", "predicate": "relates", "object": "Run",
+     "note": "Invoked once per iteration via _build_findings to produce that iteration's Finding; not itself part of Run state -- detectors are stateless, reusable across every Run."},
+    {"subject": "Hypothesis", "predicate": "references", "object": "Finding",
+     "note": "A Hypothesis must cite specific Finding fields as Evidence; it never introduces a value Finding doesn't contain."},
+    {"subject": "Evidence", "predicate": "part-of", "object": "Hypothesis",
+     "note": "Not a standalone entity -- Evidence is the specific Finding-derived citation that makes a Hypothesis reportable rather than asserted."},
+    {"subject": "ConfidenceLevel", "predicate": "determines", "object": "RootCause",
+     "note": "A Hypothesis becomes RootCause only when ConfidenceLevel reaches High, or when a Run limit (iteration cap, no follow-up queries, no new events) forces termination on whatever Hypothesis is current."},
+    {"subject": "RootCause", "predicate": "is-a", "object": "Hypothesis",
+     "note": "Same role, not a separate object -- the Hypothesis a Run happened to terminate on. Mirrors the is-a pattern used for structurally-identical-but-context-specific roles rather than class inheritance."},
+    {"subject": "Hypothesis", "predicate": "relates", "object": "InvestigationArea",
+     "note": "The current Hypothesis determines which InvestigationArea(s) would most reduce uncertainty about it -- host_isolation for host-concentrated errors, timeline for an unclear spike shape, ocsp/crl for cert_anomalies, etc."},
+    {"subject": "InvestigationArea", "predicate": "determines", "object": "FollowupQuery",
+     "note": "Each InvestigationArea's spl_template is what a concrete FollowupQuery is built from; an area with no template is prompt-only."},
+    {"subject": "FollowupQuery", "predicate": "references", "object": "Finding",
+     "note": "Must use only fields/values already present in the current Finding -- never an invented host, index, or error code."},
+    {"subject": "RootCause", "predicate": "part-of", "object": "Report",
+     "note": "Written into the Report's Root Cause Hypothesis section at the ConfidenceLevel it actually earned, not upgraded to look more conclusive."},
+    {"subject": "ConfidenceLevel", "predicate": "part-of", "object": "Report",
+     "note": "Every Report states the ConfidenceLevel of its Hypothesis explicitly -- it is not left implicit in the narrative."},
+    {"subject": "Report", "predicate": "persists", "object": "Run",
+     "note": "Each iteration's Report is the artifact submit_report writes for that Run; the sequence of Reports across iterations is the Run's investigative history."}
+  ]
+}
