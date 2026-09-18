@@ -19,6 +19,14 @@ Architecture diagram: README.md. Formal SysML v2 structural model (parts, requir
 run-state machine, each traced to source): models/ — stamped with `@ModelProvenance`;
 staleness against the code is enforced by tests/test_model_provenance.py.
 
+Two other model layers, each answering a different question — consult before assuming
+behavior isn't already captured:
+- `concept_store/concepts.json` — per-module architecture: what a specific module promises
+  (contracts, invariants), one entry per file/seam.
+- `ontology/splunk-investigation-domain.json` — per-domain-term vocabulary: what a thing
+  *is* and how it relates to the others (bounded contexts, typed relations), independent
+  of which module implements it.
+
 ## Stack
 
 Python 3.12, `uv` for dependency management. Dependencies: pyproject.toml (`llm` extra pulls in
