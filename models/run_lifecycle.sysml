@@ -13,27 +13,29 @@ package RunLifecycle {
          *     Entered by start_investigation (connector.py, writes the row
          *     via upsert_active_run).
          *   - pausedState: the row still exists but pause_requested=1.
-         *     Entered by request_pause; the standalone agent's outer loop
-         *     polls this flag between iterations rather than being
-         *     interrupted (connector.py: "polls pause_requested via the
-         *     DB before every iteration").
+         *     Entered by request_pause. Neither loop is interrupted:
+         *     the standalone agent's outer loop polls the flag before
+         *     every iteration, and the MCP path's submit_report refuses
+         *     the step (status=paused, nothing stored, iteration
+         *     unchanged) until resume clears it.
          *   - doneState: the row is cleared (clear_active_run_row).
-         *     Entered from submit_report when confidence is High,
+         *     Entered from either loop via connector._step (shared by
+         *     submit_report and run_standalone_agent) when confidence is High,
          *     iteration >= INVESTIGATOR_MAX_ITER, no queries were
          *     submitted, or follow-up queries returned no new events.
          *     Terminal — nothing transitions out of doneState.
          *
          * NOT MODELLED, deliberately: the exact confidence/iteration/
          * query conditions that trigger activeToDone — those are a
-         * disjunction of four conditions (connector.py, submit_report),
+         * disjunction of four conditions (connector.py, _step),
          * not a state distinction, and are cited directly in
          * requirements.sysml instead of turned into four fake states. */
 
     private import Foundation::ModelProvenance;
 
     @ModelProvenance {
-        derivedFromCommit = "7ffc04d8f994c55adeaf954ba03ef9b04decfe0e";
-        derivedAt = "2026-08-03";
+        derivedFromCommit = "d8b4f5bfad6a2dc9b3cd4704b208f6af332c84dd";
+        derivedAt = "2026-09-23";
         modelledPaths = (
             "splunk/connector.py",
             "splunk/db.py"

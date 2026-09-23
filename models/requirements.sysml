@@ -22,8 +22,8 @@ package Requirements {
     private import Foundation::ModelProvenance;
 
     @ModelProvenance {
-        derivedFromCommit = "7ffc04d8f994c55adeaf954ba03ef9b04decfe0e";
-        derivedAt = "2026-08-03";
+        derivedFromCommit = "d8b4f5bfad6a2dc9b3cd4704b208f6af332c84dd";
+        derivedAt = "2026-09-23";
         modelledPaths = (
             "splunk/detectors.py",
             "splunk/parsers.py",
@@ -135,7 +135,7 @@ package Requirements {
              * submit_report, request_pause, resume), modelled in
              * RunLifecycle. activeState -> pausedState -> activeState via
              * request_pause/resume; activeState -> doneState (terminal)
-             * when submit_report's confidence/iteration/query conditions
+             * when connector._step's confidence/iteration/query conditions
              * are met. State is inferred from active_runs row presence
              * plus pause_requested, not a stored enum. */
     }
