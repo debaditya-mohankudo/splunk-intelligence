@@ -48,7 +48,7 @@ package SplunkInvestigationStack {
     private import Foundation::ModelProvenance;
 
     @ModelProvenance {
-        derivedFromCommit = "d8b4f5bfad6a2dc9b3cd4704b208f6af332c84dd";
+        derivedFromCommit = "265e3764d79a9d1382f21ed834db8949e31a1fe5";
         derivedAt = "2026-09-23";
         modelledPaths = (
             "splunk/parsers.py",

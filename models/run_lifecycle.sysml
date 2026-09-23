@@ -20,7 +20,9 @@ package RunLifecycle {
          *     unchanged) until resume clears it.
          *   - doneState: the row is cleared (clear_active_run_row).
          *     Entered from either loop via connector._step (shared by
-         *     submit_report and run_standalone_agent) when confidence is High,
+         *     submit_report and run_standalone_agent) when parsed confidence
+         *     is High (after the sparse-data cap: <50 events caps High
+         *     to Medium),
          *     iteration >= INVESTIGATOR_MAX_ITER, no queries were
          *     submitted, or follow-up queries returned no new events.
          *     Terminal — nothing transitions out of doneState.
@@ -34,7 +36,7 @@ package RunLifecycle {
     private import Foundation::ModelProvenance;
 
     @ModelProvenance {
-        derivedFromCommit = "d8b4f5bfad6a2dc9b3cd4704b208f6af332c84dd";
+        derivedFromCommit = "265e3764d79a9d1382f21ed834db8949e31a1fe5";
         derivedAt = "2026-09-23";
         modelledPaths = (
             "splunk/connector.py",
