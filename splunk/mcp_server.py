@@ -75,6 +75,8 @@ def splunk__submit_report(
     Submit your investigation report and follow-up SPL queries.
     Stores the report, executes the queries, builds new findings, and returns
     either next findings (status=continue) or completion (status=done).
+    If the analyst paused the run, returns status=paused without storing
+    anything; resubmit the same report after they resume.
 
     Args:
         run_id:  The run_id from splunk__investigate_start.
@@ -97,7 +99,7 @@ def splunk__get_findings(run_id: str) -> str:
 
 @mcp.tool()
 def splunk__pause(run_id: str) -> str:
-    """Pause the investigation after the current iteration completes."""
+    """Pause the investigation: the next splunk__submit_report returns status=paused until the analyst resumes (TUI or `connector resume`)."""
     return json.dumps(connector.request_pause(run_id))
 
 

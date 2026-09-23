@@ -39,6 +39,8 @@ def _no_db_side_effects():
         patch("splunk.connector.store_queries"),
         patch("splunk.connector.clear_active_run_row"),
         patch("splunk.connector.RunLogger"),
+        patch("splunk.connector.pop_hint", return_value=None),
+        patch("splunk.connector.get_active_run_row", return_value=None),
     ):
         yield
     connector._sessions.clear()
@@ -144,7 +146,7 @@ class TestSubmitReport:
     def test_no_new_events_done_has_confidence_nudge_but_not_followup(self):
         run_id = self._start()
         report = "## Report\n**Confidence:** Medium\n\nInvestigating."
-        with patch("splunk.connector._execute_queries", return_value=None):
+        with patch("splunk.connector._execute_queries", return_value=(None, [0])):
             result = connector.submit_report(run_id, report, queries=["index=pki"])
         assert result["status"] == "done"
         assert "confidence_nudge" in result
@@ -160,7 +162,7 @@ class TestSubmitReport:
         new_df = pl.DataFrame(_load_fixture("access_logs.json"))
 
         result = None
-        with patch("splunk.connector._execute_queries", return_value=new_df):
+        with patch("splunk.connector._execute_queries", return_value=(new_df, [new_df.height])):
             for _ in range(INVESTIGATOR_MAX_ITER):
                 result = connector.submit_report(run_id, report, queries=["index=pki"])
 
@@ -170,7 +172,7 @@ class TestSubmitReport:
     def test_no_new_events_from_queries_returns_done(self):
         run_id = self._start()
         report = "## Report\n**Confidence:** Medium\n\nInvestigating."
-        with patch("splunk.connector._execute_queries", return_value=None):
+        with patch("splunk.connector._execute_queries", return_value=(None, [0])):
             result = connector.submit_report(run_id, report, queries=["index=pki"])
         assert result["status"] == "done"
         assert result.get("reason") == "no new events from follow-up queries"
@@ -179,7 +181,7 @@ class TestSubmitReport:
         run_id = self._start()
         report = "## Report\n**Confidence:** Medium\n\nInvestigating."
         new_df = pl.DataFrame(_load_fixture("access_logs.json"))
-        with patch("splunk.connector._execute_queries", return_value=new_df):
+        with patch("splunk.connector._execute_queries", return_value=(new_df, [new_df.height])):
             result = connector.submit_report(run_id, report, queries=["index=web"])
         assert result["status"] == "continue"
         assert "findings" in result
@@ -189,7 +191,7 @@ class TestSubmitReport:
         run_id = self._start()
         report = "## Report\n**Confidence:** Low\n\nEarly stage."
         new_df = pl.DataFrame(_load_fixture("windows_events.json"))
-        with patch("splunk.connector._execute_queries", return_value=new_df):
+        with patch("splunk.connector._execute_queries", return_value=(new_df, [new_df.height])):
             result = connector.submit_report(run_id, report, queries=["index=win"])
         assert result["status"] == "continue"
         assert "run_id" in result
@@ -197,6 +199,50 @@ class TestSubmitReport:
         assert "confidence" in result
         assert "event_count" in result
         assert isinstance(result["findings"], dict)
+
+
+class TestSubmitReportControls:
+    """Hint, pause, event_pairs and result_rows on the MCP path (review B1/B2/B4/B6)."""
+
+    REPORT = "## Report\n**Confidence:** Medium\n\nInvestigating."
+
+    def _start(self) -> str:
+        return connector.start_investigation(source=str(FIXTURES / "cert_errors.json"))["run_id"]
+
+    def test_findings_include_event_pairs(self):
+        run_id = self._start()
+        assert "event_pairs" in connector.get_findings(run_id)["findings"]
+
+    def test_hint_injected_into_next_findings(self):
+        run_id = self._start()
+        new_df = pl.DataFrame(_load_fixture("access_logs.json"))
+        with (
+            patch("splunk.connector._execute_queries", return_value=(new_df, [new_df.height])),
+            patch("splunk.connector.pop_hint", return_value="check api-gateway-01"),
+        ):
+            result = connector.submit_report(run_id, self.REPORT, queries=["index=web"])
+        assert result["status"] == "continue"
+        assert result["findings"]["analyst_hint"] == "check api-gateway-01"
+
+    def test_paused_run_refuses_step_without_consuming_iteration(self):
+        run_id = self._start()
+        with (
+            patch("splunk.connector.get_active_run_row", return_value={"pause_requested": 1}),
+            patch("splunk.connector._execute_queries") as execute,
+        ):
+            result = connector.submit_report(run_id, self.REPORT, queries=["index=web"])
+        assert result["status"] == "paused"
+        execute.assert_not_called()
+        connector.store_report.assert_not_called()
+        assert connector._sessions[run_id]["iteration"] == 0
+
+    def test_executed_queries_stored_with_result_rows(self):
+        run_id = self._start()
+        new_df = pl.DataFrame(_load_fixture("access_logs.json"))
+        queries = ["-- tls\nindex=web", "-- dns\nindex=dns"]
+        with patch("splunk.connector._execute_queries", return_value=(new_df, [new_df.height, 0])):
+            connector.submit_report(run_id, self.REPORT, queries=queries)
+        connector.store_queries.assert_called_once_with(run_id, 1, queries, [new_df.height, 0])
 
 
 # ---------------------------------------------------------------------------

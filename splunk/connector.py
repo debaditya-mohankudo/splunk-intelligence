@@ -34,6 +34,7 @@ import json
 import logging
 import sys
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -197,23 +198,71 @@ def start_investigation(
         return {"error": str(exc)}
 
 
+@dataclass
+class _StepOutcome:
+    status: str  # "done" | "continue"
+    confidence: str
+    reason: str = ""
+    new_df: pl.DataFrame | None = None  # prepared events, set only on "continue"
+
+
+def _pause_requested(run_id: str) -> bool:
+    row = get_active_run_row(run_id)
+    return bool(row and row.get("pause_requested"))
+
+
+def _step(run_id: str, iteration: int, report: str, queries: list[str]) -> _StepOutcome:
+    """One loop step shared by submit_report (MCP) and run_standalone_agent:
+    applies the done-rules, executes follow-ups, and records every submitted
+    query — with per-query result_rows whenever the queries were executed."""
+    high = _confidence_high(report)
+    confidence = "High" if high else "Medium"
+
+    reason = ""
+    if high:
+        reason = "high confidence"
+    elif not queries:
+        reason = "no follow-up queries"
+    elif iteration >= INVESTIGATOR_MAX_ITER:
+        reason = "max iterations reached"
+    if reason:
+        if queries:
+            store_queries(run_id, iteration, queries)
+        return _StepOutcome("done", confidence, reason)
+
+    new_df, counts = _execute_queries(queries)
+    store_queries(run_id, iteration, queries, counts)
+    if new_df is None or new_df.height == 0:
+        return _StepOutcome("done", confidence, "no new events from follow-up queries")
+    return _StepOutcome("continue", confidence, new_df=_prepare_df(new_df))
+
+
 def submit_report(run_id: str, report: str, queries: list[str] | None = None) -> dict[str, Any]:
     queries = queries or []
     session = _get_or_rehydrate_session(run_id)
     if session is None:
         return {"error": f"run_id {run_id!r} not found in active session"}
 
+    # The MCP analogue of the standalone loop's pause poll: the agent can't be
+    # blocked, so the step is refused (nothing stored, iteration unchanged)
+    # until the analyst resumes.
+    if _pause_requested(run_id):
+        return {
+            "status": "paused",
+            "run_id": run_id,
+            "next": "The analyst paused this run. Wait, then call splunk__submit_report again with the same report and queries.",
+        }
+
     iteration = session.get("iteration", 0) + 1
     session["iteration"] = iteration
-    confidence = "High" if _confidence_high(report) else "Medium"
-    session["confidence"] = confidence
-
     store_report(
         report, run_id, session.get("source", ""),
         spl=session.get("spl", ""), earliest=session.get("earliest", ""), latest=session.get("latest", ""),
     )
-    if queries:
-        store_queries(run_id, iteration, queries)
+
+    step = _step(run_id, iteration, report, queries)
+    confidence = step.confidence
+    session["confidence"] = confidence
 
     events = session["df"].height if session.get("df") is not None else 0
     upsert_active_run(run_id, iteration=iteration, confidence=confidence, events=events)
@@ -225,48 +274,35 @@ def submit_report(run_id: str, report: str, queries: list[str] | None = None) ->
 
     def _post(result: dict[str, Any]) -> None:
         dispatcher.apply_confidence_nudge(result, result.get("status", ""), confidence)
-        if ended_on_no_queries:
+        if not queries:
             dispatcher.apply_no_followup_nudge(result, result.get("status", ""), queries)
 
-    ended_on_no_queries = not queries
-
     with dispatcher.tool_called(post=_post) as call:
-        if _confidence_high(report) or iteration >= INVESTIGATOR_MAX_ITER or not queries:
+        if step.status == "done":
             clear_active_run_row(run_id)
             _sessions.pop(run_id, None)
             with RunLogger(run_id) as log:
-                log.info("investigate.done", confidence=confidence, iterations=iteration)
+                log.info("investigate.done", confidence=confidence, iterations=iteration, reason=step.reason)
             call.result = {
                 "status": "done",
                 "run_id": run_id,
                 "confidence": confidence,
                 "iterations": iteration,
+                "reason": step.reason,
                 "ui_url": ui_url,
             }
             return call.result
 
-        new_df = _execute_queries(queries)
-        if new_df is None or new_df.height == 0:
-            clear_active_run_row(run_id)
-            _sessions.pop(run_id, None)
-            with RunLogger(run_id) as log:
-                log.info("investigate.done", confidence=confidence, iterations=iteration, reason="no new events from follow-up queries")
-            call.result = {
-                "status": "done",
-                "run_id": run_id,
-                "confidence": confidence,
-                "iterations": iteration,
-                "reason": "no new events from follow-up queries",
-                "ui_url": ui_url,
-            }
-            return call.result
-
-        new_df = _prepare_df(new_df)
-        df = pl.concat([session["df"], new_df], how="diagonal")
+        df = pl.concat([session["df"], step.new_df], how="diagonal")
         session["df"] = df
         findings = _build_findings(df)
+        hint = pop_hint(run_id)
+        if hint:
+            findings["analyst_hint"] = hint
+            with RunLogger(run_id) as log:
+                log.info("hint.injected", hint=hint)
         session["findings"] = findings
-        store_events(new_df, run_id)
+        store_events(step.new_df, run_id)
         upsert_active_run(run_id, events=df.height, findings_json=json.dumps(findings, default=str))
 
         call.result = {
@@ -355,11 +391,9 @@ def run_standalone_agent(df: pl.DataFrame, run_id: str, source: str = "") -> tup
         log.info("investigate.start", source="standalone-agent", event_count=df.height)
 
         for iteration in range(1, INVESTIGATOR_MAX_ITER + 1):
-            row = get_active_run_row(run_id)
-            while row and row.get("pause_requested"):
+            while _pause_requested(run_id):
                 log.debug("agent.paused")
                 time.sleep(1)
-                row = get_active_run_row(run_id)
 
             logger.info("run_standalone_agent: iteration %d/%d — %d events", iteration, INVESTIGATOR_MAX_ITER, df.height)
             findings = _build_findings(df)
@@ -372,33 +406,15 @@ def run_standalone_agent(df: pl.DataFrame, run_id: str, source: str = "") -> tup
             report, queries = analyse(findings)
             all_queries.extend(queries)
 
-            confidence = "High" if _confidence_high(report) else "Medium"
-            upsert_active_run(run_id, iteration=iteration, confidence=confidence, events=df.height)
-            log.info("agent.iteration", iteration=iteration, confidence=confidence, queries=len(queries), events=df.height)
+            step = _step(run_id, iteration, report, queries)
+            upsert_active_run(run_id, iteration=iteration, confidence=step.confidence, events=df.height)
+            log.info("agent.iteration", iteration=iteration, confidence=step.confidence, queries=len(queries), events=df.height)
 
-            if _confidence_high(report):
-                store_queries(run_id, iteration, queries)
-                log.info("investigate.done", confidence=confidence, iterations=iteration, reason="high confidence")
+            if step.status == "done":
+                log.info("investigate.done", confidence=step.confidence, iterations=iteration, reason=step.reason)
                 break
 
-            if not queries:
-                log.info("investigate.done", confidence=confidence, iterations=iteration, reason="no follow-up queries")
-                break
-
-            if iteration == INVESTIGATOR_MAX_ITER:
-                store_queries(run_id, iteration, queries)
-                log.info("investigate.done", confidence=confidence, iterations=iteration, reason="max iterations reached")
-                break
-
-            new_df = _execute_queries(queries)
-            result_rows = [new_df.height if new_df is not None else 0] * len(queries)
-            store_queries(run_id, iteration, queries, result_rows)
-
-            if new_df is None or new_df.height == 0:
-                log.info("investigate.done", confidence=confidence, iterations=iteration, reason="no new events from follow-up queries")
-                break
-
-            df = pl.concat([df, _prepare_df(new_df)], how="diagonal")
+            df = pl.concat([df, step.new_df], how="diagonal")
             log.debug("df.grown", events=df.height)
 
     session = _sessions.get(run_id) or {}

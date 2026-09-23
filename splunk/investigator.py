@@ -17,6 +17,7 @@ import polars as pl
 from splunk.detectors import (
     correlate_events,
     detect_cert_anomalies,
+    detect_event_pair_patterns,
     detect_numeric_anomalies,
     detect_patterns,
     detect_slow_queries,
@@ -38,6 +39,7 @@ def _build_findings(df: pl.DataFrame) -> dict[str, Any]:
         "patterns": detect_patterns(df),
         "cert_anomalies": detect_cert_anomalies(df),
         "correlations": correlate_events(df),
+        "event_pairs": detect_event_pair_patterns(df),
         "severity": severity_summary(df),
         "host_ranking": host_error_ranking(df),
         "slow_queries": detect_slow_queries(df),
@@ -54,23 +56,27 @@ def _clean_spl(query_block: str) -> str:
     return _SPL_COMMENT_RE.sub("", query_block).strip()
 
 
-def _execute_queries(queries: list[str]) -> pl.DataFrame | None:
+def _execute_queries(queries: list[str]) -> tuple[pl.DataFrame | None, list[int]]:
+    """Run each follow-up block; return the combined events plus a row count
+    per block (parallel to `queries`) so callers can record result_rows."""
     from splunk.client import run_query
 
     frames: list[pl.DataFrame] = []
+    counts: list[int] = []
     for block in queries:
         spl = _clean_spl(block)
-        if not spl:
-            continue
-        logger.info("Executing follow-up query: %s", spl[:120])
-        try:
-            rows = run_query(spl)
-            if rows:
-                frames.append(pl.DataFrame(rows))
-        except Exception as exc:
-            logger.warning("Query failed — skipping: %s", exc)
+        rows: list = []
+        if spl:
+            logger.info("Executing follow-up query: %s", spl[:120])
+            try:
+                rows = run_query(spl) or []
+            except Exception as exc:
+                logger.warning("Query failed — skipping: %s", exc)
+        counts.append(len(rows))
+        if rows:
+            frames.append(pl.DataFrame(rows))
 
-    return pl.concat(frames, how="diagonal") if frames else None
+    return (pl.concat(frames, how="diagonal") if frames else None), counts
 
 
 def _prepare_df(df: pl.DataFrame) -> pl.DataFrame:

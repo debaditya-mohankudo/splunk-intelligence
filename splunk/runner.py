@@ -18,24 +18,9 @@ from typing import Any
 import polars as pl
 
 from splunk.connector import _load_from_file, _load_from_live
-from splunk.detectors import (
-    correlate_events,
-    detect_cert_anomalies,
-    detect_event_pair_patterns,
-    detect_numeric_anomalies,
-    detect_patterns,
-    detect_slow_queries,
-    detect_spikes,
-    host_error_ranking,
-    severity_summary,
-)
 from splunk.db import init_db
+from splunk.investigator import _build_findings, _prepare_df
 from splunk.logger import RunLogger
-from splunk.parsers import (
-    build_timeline,
-    extract_cert_fields,
-    extract_timestamps,
-)
 
 
 # ---------------------------------------------------------------------------
@@ -51,27 +36,12 @@ def run_pipeline(
     Parse → detect → (optionally) analyse.
     Returns (findings dict, markdown report string).
     """
-    # Normalise — single DataFrame threaded through
-    df = extract_timestamps(df)
-    df = extract_cert_fields(df)
-    df = build_timeline(df)
+    df = _prepare_df(df)
 
     fmt = "json" if source.endswith(".json") or source == "live" else "csv"
     log.parse_done(event_count=df.height, source=source, fmt=fmt)
 
-    # Detect
-    findings: dict[str, Any] = {
-        "spikes": detect_spikes(df),
-        "patterns": detect_patterns(df),
-        "cert_anomalies": detect_cert_anomalies(df),
-        "correlations": correlate_events(df),
-        "event_pairs": detect_event_pair_patterns(df),
-        "severity": severity_summary(df),
-        "host_ranking": host_error_ranking(df),
-        "slow_queries": detect_slow_queries(df),
-        "numeric_anomalies": detect_numeric_anomalies(df),
-        "event_count": df.height,
-    }
+    findings = _build_findings(df)
     log.detect_done(findings)
 
     report = _findings_to_markdown(findings)
