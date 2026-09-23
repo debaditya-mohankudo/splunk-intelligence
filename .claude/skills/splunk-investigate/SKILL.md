@@ -22,7 +22,7 @@ No server process required. Terminal UI for watching live progress (optional): `
 
 `<input>` — **mandatory**, one of:
 - File path: `results/cert_errors.json`, `results/ocsp.csv`
-- Live SPL: `"index=pki sourcetype=ocsp_error" --earliest -6h` (see Step 0 preflight below before running)
+- Live SPL: `"index=<index> sourcetype=ocsp_error" --earliest -6h` (see Step 0 preflight below before running)
 
 If neither is given, ask the user for one before calling `splunk__investigate_start` —
 `source` or `spl` is required (`connector.py::start_investigation` returns
@@ -34,17 +34,18 @@ result will carry a `repo_path_nudge` reminding you it's unavailable this run.
 
 ---
 
-## Loop — how it works (MCP path, primary)
+## Protocol
+
+**Read `docs/investigation-loop.md` before the first tool call.** It is the normative loop:
+tools, `submit_report` responses (`continue` / `done` / `paused`), done rules, report
+template, confidence rubric and sparse-data cap, and the follow-up query format. This skill
+adds only the Claude-specific steps below.
+
+The one line the server parses — put it in every report exactly like this:
 
 ```
-splunk__investigate_start(source)   →  {run_id, findings}
-Claude reasons                      →  report + SPL queries
-splunk__submit_report(run_id, ...)  →  {status: continue, findings, next}
-Claude reasons again                →  ...
-until: confidence=High | no new events | max 3 iterations
+**Confidence:** High | Medium | Low
 ```
-
-Every tool call is self-sufficient — `splunk__submit_report`'s own JSON result carries the next findings and a `next` instruction directly. Claude sees them on the next turn and continues automatically; no external hook process is involved.
 
 ---
 
@@ -78,113 +79,24 @@ Only proceed to Step 1 once all three are confirmed.
 
 ---
 
-## Step 1 — Start the investigation
+## Step 1 — Run the loop
 
 ```python
 splunk__investigate_start(source="results/cert_errors.json")
 # OR for live query (after Step 0 preflight):
-splunk__investigate_start(spl="index=pki sourcetype=ocsp_error", earliest="-6h")
+splunk__investigate_start(spl="<the user's SPL>", earliest="-6h")
 ```
 
-Returns `{run_id, findings, event_count, ui_url}`. Note the `run_id`.
-
-Fallback (if MCP server not running):
-```bash
-uv run python -m splunk.connector start --source "<file_path>"
-```
+Then reason → `splunk__submit_report` → repeat, as `docs/investigation-loop.md` describes,
+until `status` is `done`. Don't stop to ask for confirmation between iterations.
 
 ---
 
-## Step 2 — Reason over findings
+## Step 2 — Finish
 
-Analyse the findings dict and produce a structured report:
-
-```markdown
-## Summary
-<2-3 sentences on what the data shows>
-
-## Root Cause Hypothesis
-<most likely root cause based on evidence>
-
-**Confidence:** High | Medium | Low
-
-## Affected Hosts
-<from findings.host_ranking>
-
-## Timeline
-<from findings.spikes — first spike timestamp → now>
-
-## Recommended Next Steps
-- <action 1>
-- <action 2>
-- <action 3>
-```
-
-Rules:
-- Only reference hosts, error codes, timestamps, sourcetypes present in findings — never invent values
-- High = consistent signal across multiple detectors; Medium = partial; Low = sparse data
-- If `event_count` < 50 — cap confidence at Medium (enforced: `submit_report` downgrades a stated High to Medium, so it will not end the run)
-
----
-
-## Step 3 — Generate follow-up SPL queries
-
-Produce concrete SPL using only fields/values from findings. Default index: `pki`.
-
-Format each as a string whose first line is a `-- <area>` label (e.g. `-- host_isolation`):
-```
--- host_isolation
-index=pki host IN ("web-01") earliest=2024-01-15T14:32:00 latest=+2h
-| stats count by host, sourcetype, error_code | sort -count
-```
-
-Areas to cover based on findings:
-- `host_isolation` — errors concentrated on specific hosts
-- `timeline` — spike detected, get per-minute breakdown
-- `first_occurrence` — pin exact first event
-- `ocsp` — cert_anomalies contain ocsp keywords
-- `crl` — crl keywords in cert_anomalies
-
----
-
-## Step 4 — Submit report
-
-```python
-splunk__submit_report(
-    run_id="<run_id>",
-    report="<markdown report>",
-    queries=["-- host_isolation\nindex=pki ...", "-- timeline\nindex=pki ..."]
-)
-```
-
-**The tool's own JSON result carries the next findings** — no external hook needed.
-You will see them in the tool result on this turn — just continue reasoning and call `splunk__submit_report` again.
-
-Response is either:
-- `{status: "continue", findings: {...}, next: "..."}` → Claude reasons and loops
-- `{status: "done", ui_url: "...", confidence_nudge?: "...", followup_nudge?: "..."}` → investigation complete; check for advisory nudge keys before writing the final summary
-
-Fallback (if MCP server not running):
-```bash
-uv run python -m splunk.connector submit-report --run-id "<run_id>" --report "..." --queries "..." "..."
-```
-
----
-
-## Step 5 — Finish
-
-When `status: done` or confidence is High:
-- Present final summary to user
+When `status: done`:
+- Present the final summary, including any advisory nudge keys from the last result
 - Point to the TUI for the full report: `uv run python -m splunk.tui` (select run `<run_id>`)
-
----
-
-## Pause / hint mid-loop
-
-```python
-splunk__pause(run_id="<run_id>")   # pause after current iteration
-splunk__hint(run_id="<run_id>", hint="focus on web-01 cert chain errors after 14:30 UTC")
-```
 
 ---
 

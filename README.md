@@ -154,17 +154,8 @@ every turn.
 
 ## MCP Tools
 
-| Tool | Purpose |
-| --- | --- |
-| `splunk__investigate_start` | Load file or live SPL query, run detectors, return structured findings + `run_id` |
-| `splunk__submit_report` | Submit a markdown report and follow-up SPL queries; returns `{status, findings, next}` (`continue`) or `{status, ui_url}` (`done`) — either may also carry advisory `repo_path_nudge`/`confidence_nudge`/`followup_nudge` keys, never blocking, just surfacing something worth noting in the final summary |
-| `splunk__get_findings` | Read current findings for an active run without advancing the loop |
-| `splunk__pause` | Stop the loop after the current iteration |
-| `splunk__hint` | Inject an analyst hint that shapes the next iteration |
-| `splunk__query_examples` | Return past SPL queries from `splunk.db` to ground follow-up queries |
-| `splunk__lsp_call_chain` | Trace a function/symbol through a microservice's call graph to find which code path produced a log error (requires `repo_path`) |
-| `splunk__check_alerts` | Read unacknowledged alerts written by the standalone watcher (`standalone/watcher.py`) |
-| `splunk__ack_alert` | Mark a watcher alert as acknowledged so it stops appearing in `splunk__check_alerts` |
+Nine `splunk__*` tools drive the loop. The tool list, response shapes and done rules are in
+[docs/investigation-loop.md](docs/investigation-loop.md).
 
 ## Onboarding (new team members)
 
