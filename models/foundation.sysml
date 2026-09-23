@@ -49,7 +49,7 @@ package Foundation {
     }
 
     @ModelProvenance {
-        derivedFromCommit = "40b121ceb9572747fc56281069c13cc4b8ae671c";
+        derivedFromCommit = "ba24b3952db66ad10d8ec5e70d07901c53b9ff96";
         derivedAt = "2026-09-23";
         modelledPaths = (
             "splunk/config.py",
