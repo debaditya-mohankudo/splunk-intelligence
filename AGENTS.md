@@ -69,7 +69,7 @@ splunk__submit_report(
 - Treat each iteration as a refinement, not a rewrite of the full analysis
 - Use the cheapest discriminating query first; add more focused queries only if needed
 - Stop when the same root-cause hypothesis is supported by multiple detectors and follow-up queries stop producing new signal
-- If findings are sparse, cap confidence at Medium and keep queries narrow — do not invent broader theories
+- If `event_count` < 50, cap confidence at Medium (enforced server-side) and keep queries narrow — do not invent broader theories
 - Maximum 3 iterations (enforced server-side); do not loop past `status == "done"`
 
 ## Done conditions

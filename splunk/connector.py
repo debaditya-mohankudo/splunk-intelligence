@@ -55,8 +55,8 @@ from splunk.db import (
 )
 from splunk.investigator import (
     _build_findings,
-    _confidence_high,
     _execute_queries,
+    _parse_confidence,
     _prepare_df,
 )
 from splunk.logger import RunLogger
@@ -211,12 +211,12 @@ def _pause_requested(run_id: str) -> bool:
     return bool(row and row.get("pause_requested"))
 
 
-def _step(run_id: str, iteration: int, report: str, queries: list[str]) -> _StepOutcome:
+def _step(run_id: str, iteration: int, report: str, queries: list[str], event_count: int) -> _StepOutcome:
     """One loop step shared by submit_report (MCP) and run_standalone_agent:
     applies the done-rules, executes follow-ups, and records every submitted
     query — with per-query result_rows whenever the queries were executed."""
-    high = _confidence_high(report)
-    confidence = "High" if high else "Medium"
+    confidence = _parse_confidence(report, event_count)
+    high = confidence == "High"
 
     reason = ""
     if high:
@@ -260,11 +260,11 @@ def submit_report(run_id: str, report: str, queries: list[str] | None = None) ->
         spl=session.get("spl", ""), earliest=session.get("earliest", ""), latest=session.get("latest", ""),
     )
 
-    step = _step(run_id, iteration, report, queries)
+    events = session["df"].height if session.get("df") is not None else 0
+    step = _step(run_id, iteration, report, queries, events)
     confidence = step.confidence
     session["confidence"] = confidence
 
-    events = session["df"].height if session.get("df") is not None else 0
     upsert_active_run(run_id, iteration=iteration, confidence=confidence, events=events)
 
     with RunLogger(run_id) as log:
@@ -406,7 +406,7 @@ def run_standalone_agent(df: pl.DataFrame, run_id: str, source: str = "") -> tup
             report, queries = analyse(findings)
             all_queries.extend(queries)
 
-            step = _step(run_id, iteration, report, queries)
+            step = _step(run_id, iteration, report, queries, df.height)
             upsert_active_run(run_id, iteration=iteration, confidence=step.confidence, events=df.height)
             log.info("agent.iteration", iteration=iteration, confidence=step.confidence, queries=len(queries), events=df.height)
 

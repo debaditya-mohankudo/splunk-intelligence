@@ -123,7 +123,7 @@ Analyse the findings dict and produce a structured report:
 Rules:
 - Only reference hosts, error codes, timestamps, sourcetypes present in findings — never invent values
 - High = consistent signal across multiple detectors; Medium = partial; Low = sparse data
-- If `event_count` < 50 — cap confidence at Medium
+- If `event_count` < 50 — cap confidence at Medium (enforced: `submit_report` downgrades a stated High to Medium, so it will not end the run)
 
 ---
 

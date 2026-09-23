@@ -120,12 +120,29 @@ class TestSubmitReport:
         result = connector.submit_report("nonexistent-run", "report")
         assert "error" in result
 
-    def test_high_confidence_returns_done(self):
+    def test_high_confidence_returns_done(self, monkeypatch):
+        monkeypatch.setattr("splunk.investigator.SPARSE_EVENT_THRESHOLD", 0)
         run_id = self._start()
         report = "## Report\n**Confidence:** High\n\nFound root cause."
         result = connector.submit_report(run_id, report, queries=["index=pki"])
         assert result["status"] == "done"
         assert result["confidence"] == "High"
+
+    def test_high_capped_at_medium_when_sparse(self):
+        # cert_errors fixture is well under SPARSE_EVENT_THRESHOLD events
+        run_id = self._start()
+        report = "## Report\n**Confidence:** High\n\nFound root cause."
+        with patch("splunk.connector._execute_queries", return_value=(None, [0])):
+            result = connector.submit_report(run_id, report, queries=["index=pki"])
+        assert result["confidence"] == "Medium"
+        assert result["reason"] != "high confidence"
+        assert "confidence_nudge" in result
+
+    def test_low_confidence_passes_through(self):
+        run_id = self._start()
+        report = "## Report\n**Confidence:** Low\n\nThin signal."
+        result = connector.submit_report(run_id, report, queries=[])
+        assert result["confidence"] == "Low"
 
     def test_no_queries_returns_done(self):
         run_id = self._start()
@@ -135,7 +152,8 @@ class TestSubmitReport:
         assert "followup_nudge" in result
         assert "confidence_nudge" in result
 
-    def test_high_confidence_done_has_no_nudges(self):
+    def test_high_confidence_done_has_no_nudges(self, monkeypatch):
+        monkeypatch.setattr("splunk.investigator.SPARSE_EVENT_THRESHOLD", 0)
         run_id = self._start()
         report = "## Report\n**Confidence:** High\n\nFound root cause."
         result = connector.submit_report(run_id, report, queries=["index=pki"])
@@ -403,3 +421,22 @@ class TestAreaLabels:
             ).fetchone()
             conn.execute("DELETE FROM investigation_queries WHERE run_id = ?", (run_id,))
         assert (row["area"], row["spl"], row["result_rows"]) == ("tls", "index=pki", 3)
+
+
+class TestParseConfidence:
+    @pytest.mark.parametrize("text,expected", [
+        ("**Confidence:** High", "High"),
+        ("**Confidence:** medium", "Medium"),
+        ("**Confidence:** Low", "Low"),
+        ("**Confidence:** Unsure", "Medium"),
+        ("no confidence line", "Medium"),
+    ])
+    def test_levels_and_default(self, text, expected):
+        from splunk.investigator import _parse_confidence
+        assert _parse_confidence(text, 1000) == expected
+
+    def test_sparse_cap_applies_only_below_threshold(self):
+        from splunk.investigator import SPARSE_EVENT_THRESHOLD, _parse_confidence
+        assert _parse_confidence("**Confidence:** High", SPARSE_EVENT_THRESHOLD - 1) == "Medium"
+        assert _parse_confidence("**Confidence:** High", SPARSE_EVENT_THRESHOLD) == "High"
+        assert _parse_confidence("**Confidence:** Low", 1) == "Low"

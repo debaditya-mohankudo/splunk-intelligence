@@ -30,7 +30,7 @@
     "Hypothesis": {
       "bounded_context": "Reasoning",
       "definition": "A candidate root cause stated in the Report, backed by cited Evidence drawn from Finding. Re-evaluated each iteration against new Finding data rather than replaced with an unrelated one; an empty follow-up result is itself Evidence against it.",
-      "evidence": "splunk/investigator.py:_confidence_high, .claude/skills/splunk-investigate/SKILL.md"
+      "evidence": "splunk/investigator.py:_parse_confidence, .claude/skills/splunk-investigate/SKILL.md"
     },
     "Evidence": {
       "bounded_context": "Reasoning",
@@ -39,8 +39,8 @@
     },
     "ConfidenceLevel": {
       "bounded_context": "Reasoning",
-      "definition": "A three-value rubric (High/Medium/Low) rating a Hypothesis. High requires signal consistent across multiple independent detectors; Medium is partial or single-detector agreement; Low is the ceiling whenever event_count < 50, regardless of how consistent the signal looks.",
-      "evidence": ".claude/skills/splunk-investigate/SKILL.md, splunk/investigator.py:_confidence_high"
+      "definition": "A three-value rubric (High/Medium/Low) rating a Hypothesis. High requires signal consistent across multiple independent detectors; Medium is partial or single-detector agreement; Low is weak or conflicting signal. Medium is the ceiling whenever event_count < 50, regardless of how consistent the signal looks; a missing or unrecognised level is read as Medium.",
+      "evidence": ".claude/skills/splunk-investigate/SKILL.md, splunk/investigator.py:_parse_confidence"
     },
     "InvestigationArea": {
       "bounded_context": "Follow-up Inquiry",

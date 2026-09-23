@@ -30,7 +30,15 @@ from splunk.parsers import build_timeline, extract_cert_fields, extract_timestam
 
 logger = logging.getLogger(__name__)
 
-_CONFIDENCE_HIGH_RE = re.compile(r"\*\*Confidence:\*\*\s*High", re.IGNORECASE)
+_CONFIDENCE_RE = re.compile(r"\*\*Confidence:\*\*\s*(High|Medium|Low)\b", re.IGNORECASE)
+
+# A report that states no recognisable level is treated as Medium — the
+# pre-parse behaviour — so it neither ends the run nor reads as Low.
+CONFIDENCE_DEFAULT = "Medium"
+# Below this many events a single detector can look consistent by chance,
+# so a claimed High is capped at SPARSE_CONFIDENCE_CAP.
+SPARSE_EVENT_THRESHOLD = 50
+SPARSE_CONFIDENCE_CAP = "Medium"
 
 
 def _build_findings(df: pl.DataFrame) -> dict[str, Any]:
@@ -48,8 +56,13 @@ def _build_findings(df: pl.DataFrame) -> dict[str, Any]:
     }
 
 
-def _confidence_high(report: str) -> bool:
-    return bool(_CONFIDENCE_HIGH_RE.search(report))
+def _parse_confidence(report: str, event_count: int) -> str:
+    """High/Medium/Low as stated in the report, with the sparse-data cap applied."""
+    m = _CONFIDENCE_RE.search(report)
+    level = m.group(1).capitalize() if m else CONFIDENCE_DEFAULT
+    if level == "High" and event_count < SPARSE_EVENT_THRESHOLD:
+        return SPARSE_CONFIDENCE_CAP
+    return level
 
 
 def _clean_spl(query_block: str) -> str:
