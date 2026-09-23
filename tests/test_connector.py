@@ -371,3 +371,35 @@ class TestCLI:
     def test_missing_required_arg_raises_systemexit(self):
         with pytest.raises(SystemExit):
             connector._cli_main(["submit-report", "--run-id", "x"])  # missing --report
+
+
+# ---------------------------------------------------------------------------
+# Follow-up query area labels (review B3)
+# ---------------------------------------------------------------------------
+
+class TestAreaLabels:
+    @pytest.mark.parametrize("label", ["-- tls", "-- area: tls", "--area:tls", "  -- tls  "])
+    def test_label_forms_split_to_area_and_pure_spl(self, label):
+        from splunk.db import split_area_label
+        from splunk.investigator import _clean_spl
+
+        block = f"{label}\nindex=pki sourcetype=tls | stats count by host"
+        assert split_area_label(block) == ("tls", "index=pki sourcetype=tls | stats count by host")
+        assert _clean_spl(block) == "index=pki sourcetype=tls | stats count by host"
+
+    def test_unlabelled_block_has_empty_area(self):
+        from splunk.db import split_area_label
+
+        assert split_area_label("index=pki | head 5") == ("", "index=pki | head 5")
+
+    def test_store_queries_records_area_from_colon_form(self):
+        from splunk.db import _connect, store_queries
+
+        run_id = "test-area-label-colon"
+        store_queries(run_id, 1, ["-- area: tls\nindex=pki"], [3])
+        with _connect() as conn:
+            row = conn.execute(
+                "SELECT area, spl, result_rows FROM investigation_queries WHERE run_id = ?", (run_id,)
+            ).fetchone()
+            conn.execute("DELETE FROM investigation_queries WHERE run_id = ?", (run_id,))
+        assert (row["area"], row["spl"], row["result_rows"]) == ("tls", "index=pki", 3)

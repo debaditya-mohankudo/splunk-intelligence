@@ -44,7 +44,7 @@ splunk__investigate_start(source="<file or spl>")
 - Form one falsifiable hypothesis about the root cause
 - Draft a short markdown report with `**Confidence:** Low | Medium | High`
 - Write 1–3 follow-up SPL queries that can disprove or refine the hypothesis
-  - Prefix each query with a `-- area: <label>` comment line
+  - Prefix each query with a `-- <area>` comment line (e.g. `-- tls`)
   - Keep queries grounded in fields and values present in the findings
   - Optionally call `splunk__query_examples(area="<label>")` first to reuse SPL patterns that worked in past investigations
 
@@ -54,7 +54,7 @@ splunk__investigate_start(source="<file or spl>")
 splunk__submit_report(
   run_id="<run_id>",
   report="<markdown report>",
-  queries=["-- area: tls\nindex=pki ..."]
+  queries=["-- tls\nindex=pki ..."]
 )
 → {status, findings, confidence, event_count}
 ```

@@ -6,6 +6,7 @@ DB lives at <repo_root>/splunk.db — not committed.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -255,21 +256,29 @@ def load_schema(sourcetype: str) -> dict[str, str] | None:
     return schema
 
 
+# A follow-up block may start with an area label line: `-- tls` (canonical)
+# or `-- area: tls` (accepted, since agents write it). Shared with
+# investigator._clean_spl so the label is never sent to Splunk as SPL.
+_AREA_LABEL_RE = re.compile(r"^--\s*(?:area:\s*)?(\w+)\s*$\n?", re.MULTILINE)
+
+
+def split_area_label(block: str) -> tuple[str, str]:
+    """Return (area, spl) for one follow-up block; area is "" when unlabelled."""
+    block = block.strip()
+    m = _AREA_LABEL_RE.match(block)
+    area = m.group(1) if m else ""
+    return area, _AREA_LABEL_RE.sub("", block).strip()
+
+
 def store_queries(run_id: str, iteration: int, query_blocks: list[str], result_rows: list[int | None] | None = None) -> None:
     """
     Persist follow-up SPL queries for one investigation iteration.
-    query_blocks: list of strings in '-- area\\nSPL' format from generate_followup_queries tool.
+    query_blocks: strings in '-- <area>\\nSPL' format (see split_area_label).
     result_rows: optional parallel list of row counts returned by each query (None = not yet executed).
     """
-    import re
-    _comment_re = re.compile(r"^--\s*(\w+)\s*\n", re.MULTILINE)
-
     rows = []
     for i, block in enumerate(query_blocks):
-        block = block.strip()
-        m = _comment_re.match(block)
-        area = m.group(1) if m else ""
-        spl = _comment_re.sub("", block).strip()
+        area, spl = split_area_label(block)
         executed = result_rows is not None
         rrows = result_rows[i] if result_rows and i < len(result_rows) else None
         rows.append((run_id, iteration, area, spl, int(executed), rrows))

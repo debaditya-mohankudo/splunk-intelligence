@@ -131,7 +131,7 @@ Rules:
 
 Produce concrete SPL using only fields/values from findings. Default index: `pki`.
 
-Format each as a string with `-- area` comment prefix:
+Format each as a string whose first line is a `-- <area>` label (e.g. `-- host_isolation`):
 ```
 -- host_isolation
 index=pki host IN ("web-01") earliest=2024-01-15T14:32:00 latest=+2h

@@ -95,7 +95,7 @@ Same investigation engine, no MCP tool-calling required:
 
 ```bash
 uv run python -m splunk.connector start --source results/cert_errors.json
-uv run python -m splunk.connector submit-report --run-id <id> --report "..." --queries "-- area\nindex=pki ..."
+uv run python -m splunk.connector submit-report --run-id <id> --report "..." --queries "-- tls\nindex=pki ..."
 uv run python -m splunk.connector get-findings --run-id <id>
 uv run python -m splunk.connector pause --run-id <id>
 uv run python -m splunk.connector hint --run-id <id> --text "focus on web-01 after 14:30 UTC"

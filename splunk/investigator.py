@@ -14,6 +14,7 @@ from typing import Any
 
 import polars as pl
 
+from splunk.db import split_area_label
 from splunk.detectors import (
     correlate_events,
     detect_cert_anomalies,
@@ -30,7 +31,6 @@ from splunk.parsers import build_timeline, extract_cert_fields, extract_timestam
 logger = logging.getLogger(__name__)
 
 _CONFIDENCE_HIGH_RE = re.compile(r"\*\*Confidence:\*\*\s*High", re.IGNORECASE)
-_SPL_COMMENT_RE = re.compile(r"^--\s*\w+\s*$", re.MULTILINE)
 
 
 def _build_findings(df: pl.DataFrame) -> dict[str, Any]:
@@ -53,7 +53,7 @@ def _confidence_high(report: str) -> bool:
 
 
 def _clean_spl(query_block: str) -> str:
-    return _SPL_COMMENT_RE.sub("", query_block).strip()
+    return split_area_label(query_block)[1]
 
 
 def _execute_queries(queries: list[str]) -> tuple[pl.DataFrame | None, list[int]]:

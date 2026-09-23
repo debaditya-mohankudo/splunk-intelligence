@@ -81,7 +81,7 @@ def splunk__submit_report(
     Args:
         run_id:  The run_id from splunk__investigate_start.
         report:  Your markdown investigation report including **Confidence:** High/Medium/Low.
-        queries: List of follow-up SPL query strings. Each starts with a '-- area' comment line.
+        queries: List of follow-up SPL query strings. Each starts with a '-- <area>' label line, e.g. '-- tls'.
 
     Returns JSON with status=continue+findings or status=done+ui_url.
     """
