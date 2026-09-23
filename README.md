@@ -85,7 +85,7 @@ uv run python -m splunk.tui
 
 Then ask Copilot or Claude: *"Start a Splunk investigation on results/cert_errors.json"*
 
-The agent calls `splunk__investigate_start`, reasons over findings, and loops via `splunk__submit_report` until confident. See [AGENTS.md](AGENTS.md) for the full loop protocol.
+The agent calls `splunk__investigate_start`, reasons over findings, and loops via `splunk__submit_report` until confident. See [docs/investigation-loop.md](docs/investigation-loop.md) for the full loop protocol.
 
 The TUI reads `splunk.db` directly for run history and the rendered report, and polls the `active_runs` table for live iteration/confidence/event-count every ~2s — no HTTP involved. Because every `connector` function writes to `active_runs` regardless of which process calls it, the TUI shows live per-iteration progress for **both** MCP/Claude-driven investigations and the standalone `--investigate` agent path — previously (before this design), MCP-driven progress was invisible to any other process since it only lived in an in-memory dict inside whichever process was running it.
 
@@ -231,6 +231,5 @@ Epic planning, subtask creation, task grooming, task implementation using https:
 
 ## Agent instructions
 
-- **GitHub Copilot** — see [AGENTS.md](AGENTS.md) for loop rules, MCP tool reference, and report format
 - **Claude Code** — see [CLAUDE.md](CLAUDE.md) for project conventions and task backlog
 - **Onboarding** — see [.github/prompts/onboard.prompt.md](.github/prompts/onboard.prompt.md)

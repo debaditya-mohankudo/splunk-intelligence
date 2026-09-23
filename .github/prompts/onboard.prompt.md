@@ -97,7 +97,7 @@ The TUI reads `splunk.db` directly (no HTTP) for run history, the rendered repor
 
 Then ask Copilot: *"Start a Splunk investigation on results/cert_errors.json"*
 
-Copilot will call `splunk__investigate_start`, reason over findings, and loop via `splunk__submit_report` until confident. See `AGENTS.md` for the full loop rules.
+Copilot will call `splunk__investigate_start`, reason over findings, and loop via `splunk__submit_report` until confident. See `docs/investigation-loop.md` for the full loop rules.
 
 ## Running tests
 
@@ -119,6 +119,6 @@ Put these in a `.env` file at the repo root — it is gitignored.
 
 ## Where to go next
 
-- `AGENTS.md` — investigation loop rules and MCP tool reference for Copilot
+- `docs/investigation-loop.md` — investigation loop rules and MCP tool reference
 - `splunk/config.py` — tune thresholds, paths
 - `CLAUDE.md` — instructions for Claude Code sessions (same repo, different agent)

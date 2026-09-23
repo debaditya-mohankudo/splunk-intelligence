@@ -29,7 +29,7 @@ class _Settings(BaseSettings):
     SPLUNK_INVESTIGATOR_MAX_ITER: int = 3
     # Comma-separated indexes relevant to this Splunk environment — reference
     # context only, surfaced to the user during the live-SPL preflight
-    # (SKILL.md/AGENTS.md); does not change SPLUNK_INDEX or SPL generation.
+    # (SKILL.md); does not change SPLUNK_INDEX or SPL generation.
     SPLUNK_KNOWN_INDEXES: str = ""
 
     # Standalone LangGraph/Ollama agent (standalone/agent.py) — optional fallback
