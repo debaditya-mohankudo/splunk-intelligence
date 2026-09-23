@@ -49,8 +49,8 @@ package Foundation {
     }
 
     @ModelProvenance {
-        derivedFromCommit = "7ffc04d8f994c55adeaf954ba03ef9b04decfe0e";
-        derivedAt = "2026-08-03";
+        derivedFromCommit = "40b121ceb9572747fc56281069c13cc4b8ae671c";
+        derivedAt = "2026-09-23";
         modelledPaths = (
             "splunk/config.py",
             "splunk/logger.py"

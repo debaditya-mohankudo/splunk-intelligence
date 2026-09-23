@@ -9,7 +9,8 @@
     "Reasoning": "Interpreting Findings into a rated candidate root cause: Hypothesis, Evidence, Confidence Level. This is what an investigator (human or agent) does inside each loop iteration, distinct from the mechanical MCP call sequence in docs/investigation-loop.md.",
     "Follow-up Inquiry": "Turning an open Hypothesis into a scoped, executable next query -- Investigation Areas and their SPL templates.",
     "Reporting": "The artifact and outcome an investigator hands to a human: the Report and the Root Cause it settles on.",
-    "Run Lifecycle": "The mechanical state a single investigation occupies over time -- active/paused/done -- independent of what's being reasoned about inside it."
+    "Run Lifecycle": "The mechanical state a single investigation occupies over time -- active/paused/done -- independent of what's being reasoned about inside it.",
+    "Monitoring": "Continuous, unattended detection outside an interactive Run: the standalone watcher re-runs detectors on new events and raises Alerts for a human or agent to acknowledge."
   },
   "terms": {
     "Run": {
@@ -19,8 +20,21 @@
     },
     "Detector": {
       "bounded_context": "Detection",
-      "definition": "A pure, deterministic function over the event DataFrame that produces one slice of Finding: detect_spikes, detect_patterns, detect_cert_anomalies, correlate_events, severity_summary, host_error_ranking, detect_slow_queries, detect_numeric_anomalies. Detectors never reason -- they compute counts, ranks, thresholds.",
-      "evidence": "splunk/detectors.py"
+      "definition": "A pure, deterministic function over the event DataFrame that produces one slice of Finding. correlate_events groups events in a time window regardless of entity; detect_event_pairs / detect_event_pair_patterns are the entity-keyed, ordered variant (first_pattern precedes second_pattern on the same entity within maxspan), driven by CORRELATE_PAIR_PATTERNS. Detectors never reason -- they compute counts, ranks, thresholds.",
+      "evidence": "splunk/detectors.py",
+      "members": [
+        "detect_spikes",
+        "detect_patterns",
+        "correlate_events",
+        "detect_event_pairs",
+        "detect_event_pair_patterns",
+        "detect_cert_anomalies",
+        "severity_summary",
+        "host_error_ranking",
+        "detect_slow_queries",
+        "detect_http_errors",
+        "detect_numeric_anomalies"
+      ]
     },
     "Finding": {
       "bounded_context": "Detection",
@@ -44,8 +58,16 @@
     },
     "InvestigationArea": {
       "bounded_context": "Follow-up Inquiry",
-      "definition": "A named domain of follow-up inquiry pairing a reasoning prompt with an SPL query template: api_errors, database_slowdown, cascading_failure, host_isolation, timeline, first_occurrence, plus cert-specific ocsp/crl driven by cert_anomalies. The vocabulary for turning a Hypothesis into 'what to look at next.'",
-      "evidence": "splunk/investigation_areas.py"
+      "definition": "A named domain of follow-up inquiry pairing a reasoning prompt with an SPL query template. The registry (INVESTIGATION_AREAS) is consumed only by the standalone agent (standalone/agent.py); on the MCP path, areas are free text the investigator chooses per docs/investigation-loop.md. Cert anomalies have no area of their own: ocsp/crl are CERT_ANOMALY_KEYWORDS and CORRELATE_PAIR_PATTERNS inputs to detectors, not areas. The vocabulary for turning a Hypothesis into 'what to look at next.'",
+      "evidence": "splunk/investigation_areas.py:INVESTIGATION_AREAS, standalone/agent.py:get_spl_template",
+      "members": [
+        "api_errors",
+        "database_slowdown",
+        "cascading_failure",
+        "host_isolation",
+        "timeline",
+        "first_occurrence"
+      ]
     },
     "FollowupQuery": {
       "bounded_context": "Follow-up Inquiry",
@@ -61,32 +83,113 @@
       "bounded_context": "Reporting",
       "definition": "The specific Hypothesis a Run terminates on -- the one that reached High ConfidenceLevel, or the best-supported one when the Run is forced to terminate by an iteration/event-count limit without reaching High. Every RootCause is a Hypothesis; not every Hypothesis becomes one.",
       "evidence": "splunk/connector.py:submit_report"
+    },
+    "Alert": {
+      "bounded_context": "Monitoring",
+      "definition": "A detector hit raised by the standalone watcher, persisted in the alerts table with severity, summary and the full detector hit as detail. Lifecycle is unacked -> acked; alerts are never auto-acknowledged, only via splunk__ack_alert after splunk__check_alerts surfaces them.",
+      "evidence": "splunk/db.py:CREATE TABLE IF NOT EXISTS alerts, splunk/mcp_server.py:splunk__check_alerts, splunk/mcp_server.py:splunk__ack_alert, standalone/watcher.py"
+    },
+    "AnalystHint": {
+      "bounded_context": "Reasoning",
+      "definition": "Free-text steering from a human, set on an active Run via splunk__hint. It is stored on the active_runs row, popped once, and injected into the next iteration's Finding set as analyst_hint on both the MCP and standalone paths. It is steering input, not Evidence: a Hypothesis still has to be grounded in detector output.",
+      "evidence": "splunk/mcp_server.py:splunk__hint, splunk/connector.py:set_hint, splunk/connector.py:analyst_hint"
+    },
+    "Nudge": {
+      "bounded_context": "Run Lifecycle",
+      "definition": "An advisory message attached as one extra key to an MCP tool result. It covers repo_path being omitted, confidence that never reached High, and no follow-up queries submitted. A Nudge never blocks the call or changes the rest of the result; it only surfaces an easy-to-miss fact to the investigator.",
+      "evidence": "splunk/dispatcher.py:repo_path_nudge, splunk/dispatcher.py:confidence_nudge, splunk/dispatcher.py:no_followup_nudge"
     }
   },
   "relations": [
-    {"subject": "Finding", "predicate": "part-of", "object": "Run",
-     "note": "Produced fresh each iteration by that Run's detectors and held as its current findings; no standalone identity outside the Run that produced it."},
-    {"subject": "Detector", "predicate": "relates", "object": "Run",
-     "note": "Invoked once per iteration via _build_findings to produce that iteration's Finding; not itself part of Run state -- detectors are stateless, reusable across every Run."},
-    {"subject": "Hypothesis", "predicate": "references", "object": "Finding",
-     "note": "A Hypothesis must cite specific Finding fields as Evidence; it never introduces a value Finding doesn't contain."},
-    {"subject": "Evidence", "predicate": "part-of", "object": "Hypothesis",
-     "note": "Not a standalone entity -- Evidence is the specific Finding-derived citation that makes a Hypothesis reportable rather than asserted."},
-    {"subject": "ConfidenceLevel", "predicate": "determines", "object": "RootCause",
-     "note": "A Hypothesis becomes RootCause only when ConfidenceLevel reaches High, or when a Run limit (iteration cap, no follow-up queries, no new events) forces termination on whatever Hypothesis is current."},
-    {"subject": "RootCause", "predicate": "is-a", "object": "Hypothesis",
-     "note": "Same role, not a separate object -- the Hypothesis a Run happened to terminate on. Mirrors the is-a pattern used for structurally-identical-but-context-specific roles rather than class inheritance."},
-    {"subject": "Hypothesis", "predicate": "relates", "object": "InvestigationArea",
-     "note": "The current Hypothesis determines which InvestigationArea(s) would most reduce uncertainty about it -- host_isolation for host-concentrated errors, timeline for an unclear spike shape, ocsp/crl for cert_anomalies, etc."},
-    {"subject": "InvestigationArea", "predicate": "determines", "object": "FollowupQuery",
-     "note": "Each InvestigationArea's spl_template is what a concrete FollowupQuery is built from; an area with no template is prompt-only."},
-    {"subject": "FollowupQuery", "predicate": "references", "object": "Finding",
-     "note": "Must use only fields/values already present in the current Finding -- never an invented host, index, or error code."},
-    {"subject": "RootCause", "predicate": "part-of", "object": "Report",
-     "note": "Written into the Report's Root Cause Hypothesis section at the ConfidenceLevel it actually earned, not upgraded to look more conclusive."},
-    {"subject": "ConfidenceLevel", "predicate": "part-of", "object": "Report",
-     "note": "Every Report states the ConfidenceLevel of its Hypothesis explicitly -- it is not left implicit in the narrative."},
-    {"subject": "Report", "predicate": "persists", "object": "Run",
-     "note": "Each iteration's Report is the artifact submit_report writes for that Run; the sequence of Reports across iterations is the Run's investigative history."}
+    {
+      "subject": "Finding",
+      "predicate": "part-of",
+      "object": "Run",
+      "note": "Produced fresh each iteration by that Run's detectors and held as its current findings; no standalone identity outside the Run that produced it."
+    },
+    {
+      "subject": "Detector",
+      "predicate": "relates",
+      "object": "Run",
+      "note": "Invoked once per iteration via _build_findings to produce that iteration's Finding; not itself part of Run state -- detectors are stateless, reusable across every Run."
+    },
+    {
+      "subject": "Hypothesis",
+      "predicate": "references",
+      "object": "Finding",
+      "note": "A Hypothesis must cite specific Finding fields as Evidence; it never introduces a value Finding doesn't contain."
+    },
+    {
+      "subject": "Evidence",
+      "predicate": "part-of",
+      "object": "Hypothesis",
+      "note": "Not a standalone entity -- Evidence is the specific Finding-derived citation that makes a Hypothesis reportable rather than asserted."
+    },
+    {
+      "subject": "ConfidenceLevel",
+      "predicate": "determines",
+      "object": "RootCause",
+      "note": "A Hypothesis becomes RootCause only when ConfidenceLevel reaches High, or when a Run limit (iteration cap, no follow-up queries, no new events) forces termination on whatever Hypothesis is current."
+    },
+    {
+      "subject": "RootCause",
+      "predicate": "is-a",
+      "object": "Hypothesis",
+      "note": "Same role, not a separate object -- the Hypothesis a Run happened to terminate on. Mirrors the is-a pattern used for structurally-identical-but-context-specific roles rather than class inheritance."
+    },
+    {
+      "subject": "Hypothesis",
+      "predicate": "relates",
+      "object": "InvestigationArea",
+      "note": "The current Hypothesis determines which InvestigationArea(s) would most reduce uncertainty about it -- host_isolation for host-concentrated errors, timeline for an unclear spike shape, ocsp/crl for cert_anomalies, etc."
+    },
+    {
+      "subject": "InvestigationArea",
+      "predicate": "determines",
+      "object": "FollowupQuery",
+      "note": "Each InvestigationArea's spl_template is what a concrete FollowupQuery is built from; an area with no template is prompt-only."
+    },
+    {
+      "subject": "FollowupQuery",
+      "predicate": "references",
+      "object": "Finding",
+      "note": "Must use only fields/values already present in the current Finding -- never an invented host, index, or error code."
+    },
+    {
+      "subject": "RootCause",
+      "predicate": "part-of",
+      "object": "Report",
+      "note": "Written into the Report's Root Cause Hypothesis section at the ConfidenceLevel it actually earned, not upgraded to look more conclusive."
+    },
+    {
+      "subject": "ConfidenceLevel",
+      "predicate": "part-of",
+      "object": "Report",
+      "note": "Every Report states the ConfidenceLevel of its Hypothesis explicitly -- it is not left implicit in the narrative."
+    },
+    {
+      "subject": "Report",
+      "predicate": "part-of",
+      "object": "Run",
+      "note": "Each iteration's Report is written by submit_report for its Run and stored against run_id; the ordered Reports are the Run's investigative history. They also outlive it: done deletes the active_runs row, so reports are the only trace that a finished Run ever existed."
+    },
+    {
+      "subject": "Alert",
+      "predicate": "references",
+      "object": "Finding",
+      "note": "An Alert's detail is one detector hit, the same shape as a Finding slice, raised without an interactive Run."
+    },
+    {
+      "subject": "AnalystHint",
+      "predicate": "part-of",
+      "object": "Finding",
+      "note": "Injected into the next iteration's Finding set under analyst_hint; consumed once."
+    },
+    {
+      "subject": "Nudge",
+      "predicate": "describes",
+      "object": "Report",
+      "note": "confidence_nudge and no_followup_nudge are attached to the submit_report result that carries the Report."
+    }
   ]
 }

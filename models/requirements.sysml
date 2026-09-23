@@ -22,7 +22,7 @@ package Requirements {
     private import Foundation::ModelProvenance;
 
     @ModelProvenance {
-        derivedFromCommit = "265e3764d79a9d1382f21ed834db8949e31a1fe5";
+        derivedFromCommit = "40b121ceb9572747fc56281069c13cc4b8ae671c";
         derivedAt = "2026-09-23";
         modelledPaths = (
             "splunk/detectors.py",
@@ -91,7 +91,7 @@ package Requirements {
              * — it imports InvestigationAreaRegistry and LLMBackendSeam,
              * not DetectionCore. Keeps the standalone agent's reasoning
              * surface identical in shape to what the MCP path hands
-             * Copilot/Claude, so the two reasoning paths stay comparable. */
+             * the MCP-path agent, so the two reasoning paths stay comparable. */
     }
     satisfy requirement AgentFindingsOnlyRequirement by system.agent;
 
