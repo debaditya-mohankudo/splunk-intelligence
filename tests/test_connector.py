@@ -93,7 +93,7 @@ class TestStartInvestigation:
 
         result = connector.start_investigation(source=str(dest))
         assert "repo_path_nudge" in result
-        assert "lsp_call_chain" in result["repo_path_nudge"]
+        assert "find_symbol_refs" in result["repo_path_nudge"]
 
     def test_multiple_concurrent_runs_allowed(self, tmp_path):
         # No singleton lock (the old FastAPI 409-on-concurrent-run behavior is
@@ -307,6 +307,51 @@ class TestPauseResumeHint:
 
 
 # ---------------------------------------------------------------------------
+# find_symbol_refs + repo_path rehydrate (review S5, B7)
+# ---------------------------------------------------------------------------
+
+class TestFindSymbolRefs:
+    def _repo(self, tmp_path):
+        (tmp_path / "svc.py").write_text(
+            "def validate_cert(c):\n    return c\n\n"
+            "# validate_cert is called below\n"
+            "validate_cert(1)\nvalidate_certificate(2)\n"
+        )
+        return tmp_path
+
+    def test_unknown_run_returns_error(self):
+        assert "error" in connector.find_symbol_refs("nope", "x")
+
+    def test_no_repo_path_returns_error(self):
+        connector._sessions["r"] = {"repo_path": ""}
+        assert "error" in connector.find_symbol_refs("r", "x")
+
+    def test_definition_and_whole_word_refs(self, tmp_path):
+        connector._sessions["r"] = {"repo_path": str(self._repo(tmp_path))}
+        result = connector.find_symbol_refs("r", "validate_cert")
+        [entry] = result["results"]
+        assert entry["definition"]["line"] == 1
+        assert [r["line"] for r in entry["references"]] == [5]
+
+    def test_rehydrated_session_keeps_repo_path(self):
+        row = {"findings_json": "{}", "iteration": 1, "confidence": "Medium",
+               "source": "x.json", "repo_path": "/some/repo"}
+        with (
+            patch("splunk.connector.get_active_run_row", return_value=row),
+            patch("splunk.connector.query_events", return_value=pl.DataFrame()),
+            patch("splunk.connector._prepare_df", side_effect=lambda df: df),
+        ):
+            session = connector._get_or_rehydrate_session("rehydrated")
+        assert session["repo_path"] == "/some/repo"
+
+    def test_start_persists_repo_path(self, tmp_path):
+        dest = tmp_path / "cert_errors.json"
+        shutil.copy(FIXTURES / "cert_errors.json", dest)
+        connector.start_investigation(source=str(dest), repo_path="/some/repo")
+        assert connector.upsert_active_run.call_args.kwargs["repo_path"] == "/some/repo"
+
+
+# ---------------------------------------------------------------------------
 # active_runs DB round-trip — no mocking here, exercises real splunk.db
 # ---------------------------------------------------------------------------
 
@@ -385,6 +430,22 @@ class TestCLI:
         connector._cli_main(["get-findings", "--run-id", "nonexistent-run"])
         out = json.loads(capsys.readouterr().out)
         assert "error" in out
+
+    def test_findings_command_writes_report(self, tmp_path, capsys):
+        dest = tmp_path / "cert_errors.json"
+        shutil.copy(FIXTURES / "cert_errors.json", dest)
+
+        connector._cli_main(["findings", "--source", str(dest), "--output", str(tmp_path / "out")])
+        [report] = (tmp_path / "out").glob("cert_errors_*.md")
+        assert report.read_text().startswith("# Splunk Findings")
+        assert "findings |" in capsys.readouterr().out
+
+    def test_findings_json_flag_prints_findings(self, tmp_path, capsys):
+        dest = tmp_path / "cert_errors.json"
+        shutil.copy(FIXTURES / "cert_errors.json", dest)
+
+        connector._cli_main(["findings", "--source", str(dest), "--json"])
+        assert "event_pairs" in json.loads(capsys.readouterr().out)
 
     def test_missing_required_arg_raises_systemexit(self):
         with pytest.raises(SystemExit):

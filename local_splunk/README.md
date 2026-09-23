@@ -46,7 +46,7 @@ docker exec splunk-dummy /opt/splunk/bin/splunk http-event-collector create loca
 uv run python ingest_fixtures.py --token <token-from-step-3>
 
 # 5. Query it for real
-uv run python -m splunk.runner --live --spl 'sourcetype=cert_errors' --earliest -24h
+uv run python -m splunk findings --spl 'sourcetype=cert_errors' --earliest -24h
 ```
 
 ## Testing SPL directly (e.g. the transaction command)
@@ -56,9 +56,9 @@ Polars detector can't express (server-side `transaction`, `tstats`, etc.)
 for real:
 
 ```bash
-uv run python -m splunk.runner --live --spl \
+uv run python -m splunk findings --spl \
   'sourcetype=cert_errors | transaction host maxspan=1h startswith="ocsp" endswith="handshake failed"' \
-  --dump-findings
+  --json
 ```
 
 ## Teardown

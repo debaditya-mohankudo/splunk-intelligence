@@ -44,7 +44,7 @@ is involved.
 | `splunk__pause` | Ask the loop to pause — the next `submit_report` is refused until resumed |
 | `splunk__hint` | Queue an analyst hint; it appears as `findings.analyst_hint` on the next `continue` |
 | `splunk__query_examples` | Past SPL queries from `splunk.db` (filter by `area`) to ground follow-ups |
-| `splunk__lsp_call_chain` | Trace a symbol through a microservice's call graph (requires `repo_path`) |
+| `splunk__find_symbol_refs` | Find where a symbol is defined and referenced in the microservice repo (requires `repo_path`) |
 | `splunk__check_alerts` | Read unacknowledged alerts written by `standalone/watcher.py` |
 | `splunk__ack_alert` | Acknowledge a watcher alert so it stops appearing in `check_alerts` |
 

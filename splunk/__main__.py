@@ -1,3 +1,3 @@
-from splunk.runner import main
+from splunk.connector import _cli_main
 
-main()
+_cli_main()

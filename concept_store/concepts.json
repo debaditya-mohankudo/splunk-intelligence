@@ -60,7 +60,7 @@
         "Tool call arguments (not tool return strings) are the channel for state mutation in tool_node_fn — it reads args from the preceding AIMessage.tool_calls, matched by tool_call_id, rather than parsing sentinel markers out of a tool's return value (format_report's return value is used verbatim as the final report, so it must stay clean)."
       ],
       "created_at": "2026-08-03T02:43:16.420467+00:00",
-      "description": "LangGraph ReAct agent (Qwen2.5 via Ollama) used only behind the --investigate CLI flag / connector.py's run_standalone_agent path — the fallback investigation loop for environments without Copilot/Claude driving MCP directly. Reasons over detector findings via a small tool set and emits a markdown report through format_report.",
+      "description": "LangGraph ReAct agent (Qwen2.5 via Ollama) used only behind the `python -m splunk agent` CLI subcommand / connector.py's run_standalone_agent path — the fallback investigation loop for environments without Copilot/Claude driving MCP directly. Reasons over detector findings via a small tool set and emits a markdown report through format_report.",
       "evidence": [
         "standalone/agent.py:LogAnalysisState",
         "standalone/agent.py:tool_node_fn",
@@ -79,14 +79,13 @@
     "tool-call-dispatcher": {
       "confidence": 0.8,
       "contracts": [
-        "tool_called(pre, post) — pre runs on entry; post runs on exit only when no exception was raised AND call.result has no 'error' key (success is signaled by absence of 'error', matching connector.py's existing convention across all its return shapes — there is no 'ok' key convention here, unlike taskfw).",
-        "repo_path_nudge/confidence_nudge/no_followup_nudge take plain values (repo_path str, status+confidence str, status+queries list), never a session dict or connector internals — keeps dispatcher.py decoupled from connector.py's _sessions state.",
+        "repo_path_nudge/confidence_nudge/no_followup_nudge are pure: they take plain values (repo_path str, status+confidence str, status+queries list) and return a string or None — never a session dict or connector internals.",
+        "connector.py calls them only on success paths (start_investigation's result, submit_report's status=done result); an {'error': ...} result is never nudged.",
         "no_followup_nudge fires only on submit_report's specific 'not queries' done-branch, not the separate 'no new events from follow-up queries' done-branch — the two are different failure modes and only the former should prompt 'consider deeper SPL'."
       ],
       "created_at": "2026-08-03T16:29:09.083292+00:00",
-      "description": "Self-contained pre/post hook (tool_called context manager) around connector.py's MCP-facing operations, plus three advisory nudge functions. Mirrors taskfw/dispatcher.py's pattern but for a distinct reason: not to replace a broken external-hook dependency (there wasn't one — connector.py's results were always self-sufficient), but to give the MCP tools a place to attach advisory nudges without scattering that logic inline.",
+      "description": "Three pure advisory nudge functions. connector.py adds their text to MCP tool results under one extra key each (repo_path_nudge/confidence_nudge/followup_nudge). The former tool_called pre/post context manager was removed (review S4): it wrapped three one-line ifs and mirrored taskfw's design rather than meeting a need here.",
       "evidence": [
-        "splunk/dispatcher.py:tool_called",
         "splunk/dispatcher.py:repo_path_nudge",
         "splunk/dispatcher.py:confidence_nudge",
         "splunk/dispatcher.py:no_followup_nudge",
@@ -96,10 +95,10 @@
         "tests/test_connector.py"
       ],
       "invariants": [
-        "apply_*_nudge functions mutate result in place, adding at most one new key (repo_path_nudge/confidence_nudge/followup_nudge) — never remove or change existing keys.",
+        "A nudge adds at most one new key to a result and never removes or changes existing keys.",
         "A nudge is advisory only: it never blocks a tool call or changes status/findings, only adds an optional string key the calling agent may act on."
       ],
-      "last_validated": "2026-08-03T16:29:09.083358+00:00",
+      "last_validated": "2026-09-23T00:00:00+00:00",
       "module": "splunk/dispatcher.py",
       "name": "tool-call-dispatcher"
     }

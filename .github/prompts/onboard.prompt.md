@@ -72,13 +72,13 @@ results/            — Splunk export files to analyse (gitignored)
 ### From a file
 
 ```bash
-uv run python -m splunk --input results/cert_errors.json
+uv run python -m splunk findings --source results/cert_errors.json
 ```
 
 ### Live query
 
 ```bash
-uv run python -m splunk --live --spl "index=pki sourcetype=ocsp_error" --earliest -6h
+uv run python -m splunk findings --spl "index=pki sourcetype=ocsp_error" --earliest -6h
 ```
 
 ### Via Copilot (MCP tools)

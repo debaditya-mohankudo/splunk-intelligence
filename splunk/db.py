@@ -43,16 +43,6 @@ def init_db() -> None:
                 extra_json  TEXT
             );
 
-            CREATE TABLE IF NOT EXISTS findings (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                run_id      TEXT NOT NULL,
-                created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-                type        TEXT NOT NULL,
-                severity    TEXT,
-                host        TEXT,
-                body_json   TEXT
-            );
-
             CREATE TABLE IF NOT EXISTS reports (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 run_id      TEXT NOT NULL,
@@ -94,6 +84,7 @@ def init_db() -> None:
                 pause_requested  INTEGER NOT NULL DEFAULT 0,
                 hint             TEXT,
                 findings_json    TEXT,
+                repo_path        TEXT,
                 updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
             );
 
@@ -114,7 +105,6 @@ def init_db() -> None:
             );
 
             CREATE INDEX IF NOT EXISTS idx_events_run      ON events(run_id);
-            CREATE INDEX IF NOT EXISTS idx_findings_run    ON findings(run_id);
             CREATE INDEX IF NOT EXISTS idx_reports_run     ON reports(run_id);
             CREATE INDEX IF NOT EXISTS idx_schema_stype    ON sourcetype_schema(sourcetype);
             CREATE INDEX IF NOT EXISTS idx_iquery_run      ON investigation_queries(run_id);
@@ -131,6 +121,11 @@ def init_db() -> None:
         existing_event_cols = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
         if "app" not in existing_event_cols:
             conn.execute("ALTER TABLE events ADD COLUMN app TEXT")
+
+        # Migration for databases created before repo_path existed on active_runs.
+        existing_run_cols = {row["name"] for row in conn.execute("PRAGMA table_info(active_runs)")}
+        if "repo_path" not in existing_run_cols:
+            conn.execute("ALTER TABLE active_runs ADD COLUMN repo_path TEXT")
 
 
 def store_events(df: pl.DataFrame, run_id: str) -> int:
@@ -160,31 +155,6 @@ def store_events(df: pl.DataFrame, run_id: str) -> int:
         )
     logger.info("store_events: inserted %d rows for run_id=%s", len(rows), run_id)
     return len(rows)
-
-
-def store_findings(findings: dict[str, Any], run_id: str) -> None:
-    """Persist findings dict (from detectors) as individual rows."""
-    import json
-
-    rows = []
-    for ftype, items in findings.items():
-        if not isinstance(items, list):
-            continue
-        for item in items:
-            rows.append((
-                run_id,
-                ftype,
-                item.get("severity") or item.get("type") or "",
-                item.get("host") or "",
-                json.dumps(item, default=str),
-            ))
-
-    with _connect() as conn:
-        conn.executemany(
-            "INSERT INTO findings (run_id, type, severity, host, body_json) VALUES (?, ?, ?, ?, ?)",
-            rows,
-        )
-    logger.info("store_findings: inserted %d finding rows for run_id=%s", len(rows), run_id)
 
 
 def store_report(
@@ -370,7 +340,7 @@ def get_queries(run_id: str) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-_ACTIVE_RUN_FIELDS = {"source", "iteration", "confidence", "events", "pause_requested", "hint", "findings_json"}
+_ACTIVE_RUN_FIELDS = {"source", "iteration", "confidence", "events", "pause_requested", "hint", "findings_json", "repo_path"}
 
 
 def upsert_active_run(run_id: str, **fields: Any) -> None:

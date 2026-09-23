@@ -53,7 +53,7 @@ class RunLogger:
             self._write("DEBUG", event, **kwargs)
 
     # ------------------------------------------------------------------
-    # Lifecycle helpers — called by runner.py at each stage
+    # Lifecycle helpers — called by connector.py's findings CLI
     # ------------------------------------------------------------------
 
     def parse_done(self, event_count: int, source: str, fmt: str) -> None:

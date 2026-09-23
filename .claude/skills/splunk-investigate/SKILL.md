@@ -29,7 +29,7 @@ If neither is given, ask the user for one before calling `splunk__investigate_st
 `{"error": "Provide 'source' (file path) or 'spl' (live SPL query)"}` otherwise).
 
 `repo_path` (optional) — path to the microservice source repo, enables
-`splunk__lsp_call_chain` for code cross-referencing. Omit to skip; the tool
+`splunk__find_symbol_refs` for code cross-referencing. Omit to skip; the tool
 result will carry a `repo_path_nudge` reminding you it's unavailable this run.
 
 ---

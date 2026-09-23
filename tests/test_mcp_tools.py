@@ -115,15 +115,11 @@ class TestHint:
         assert "error" in result
 
 
-class TestLspCallChain:
-    def test_returns_error_when_session_not_found(self):
-        with patch("splunk.mcp_server.connector.get_session", return_value=None):
-            from splunk.mcp_server import splunk__lsp_call_chain
-            result = json.loads(splunk__lsp_call_chain("run-1", "some_func"))
+class TestFindSymbolRefs:
+    def test_delegates_to_connector(self):
+        with patch("splunk.mcp_server.connector.find_symbol_refs", return_value={"error": "not active"}) as m:
+            from splunk.mcp_server import splunk__find_symbol_refs
+            result = json.loads(splunk__find_symbol_refs("run-1", "some_func"))
         assert "error" in result
+        m.assert_called_once_with("run-1", "some_func", 15)
 
-    def test_returns_error_when_no_repo_path(self):
-        with patch("splunk.mcp_server.connector.get_session", return_value={"repo_path": ""}):
-            from splunk.mcp_server import splunk__lsp_call_chain
-            result = json.loads(splunk__lsp_call_chain("run-1", "some_func"))
-        assert "error" in result

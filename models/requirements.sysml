@@ -98,7 +98,7 @@ package Requirements {
     requirement def NoServerProcessRequirement {
         doc /* Source: splunk/connector.py:1-8 ("All callers ... go through
              * here instead of talking to each other over HTTP. There is
-             * no server process anymore."). MCPServer, Runner, and TUI all
+             * no server process anymore."). MCPServer, TUI, and the CLI all
              * call Orchestrator in-process; there is no daemon to keep
              * alive and no network hop between them. */
     }
@@ -173,7 +173,7 @@ package Requirements {
     requirement def MCPPortabilityRequirement {
         doc /* Source: splunk/mcp_server.py. 9 investigation tools
              * (investigate_start, submit_report, get_findings, pause,
-             * hint, query_examples, lsp_call_chain, check_alerts,
+             * hint, query_examples, find_symbol_refs, check_alerts,
              * ack_alert) are the only interface MCPServer exposes — any
              * MCP host reaches the whole investigation loop through them,
              * with no host-specific adapter on top. */

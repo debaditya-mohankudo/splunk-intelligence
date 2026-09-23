@@ -50,7 +50,7 @@ def _severity_for_slow_query(hit: dict, threshold_ms: int) -> str:
 
 
 def _run_detectors(df: pl.DataFrame) -> list[dict]:
-    """Normalize the slice the same way runner.run_pipeline does, then run
+    """Normalize the slice the same way connector.start_investigation does, then run
     the watcher's detector set, tagging each hit with severity + summary."""
     df = extract_timestamps(df)
     df = build_timeline(df)

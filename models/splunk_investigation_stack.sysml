@@ -12,8 +12,8 @@ package SplunkInvestigationStack {
          * move independently.
          *
          * Orchestrator (connector.py) is the single part every entry
-         * surface calls through — MCPServer, Runner, TUI, and its own
-         * embedded CLI all depend on it, and it alone owns the in-process
+         * surface calls through — MCPServer, TUI, and its own embedded
+         * CLI (`python -m splunk`, the only CLI) all depend on it, and it alone owns the in-process
          * `_sessions` cache plus the write-through to Persistence's
          * `active_runs` table. There is no server process (connector.py:
          * 1-8 — "there is no server process anymore"); every "interface"
@@ -25,7 +25,7 @@ package SplunkInvestigationStack {
          * backend is a new LLMBackendSeam implementation, a new
          * investigation domain is a new InvestigationAreaRegistry entry,
          * and neither requires touching AgentLoop. It is reachable only
-         * via the optional --investigate flag and depends on DetectionCore
+         * via the optional `python -m splunk agent` subcommand and depends on DetectionCore
          * for findings but nothing in the primary MCP path depends on it —
          * README.md and CLAUDE.md both call it "a fallback, not the
          * primary path."
@@ -58,7 +58,6 @@ package SplunkInvestigationStack {
             "splunk/connector.py",
             "splunk/dispatcher.py",
             "splunk/mcp_server.py",
-            "splunk/runner.py",
             "splunk/tui.py",
             "splunk/client.py",
             "splunk/auth.py",
@@ -82,7 +81,7 @@ package SplunkInvestigationStack {
 
     part def Persistence {
         doc /* splunk/db.py. SQLite store (splunk.db, gitignored — never
-             * committed) owning every table: events, findings, reports,
+             * committed) owning every table: events, reports,
              * sourcetype_schema, investigation_queries, active_runs,
              * alerts, watcher_state. Sits at the bottom of the dependency
              * graph — no imports besides polars/stdlib. */
@@ -94,18 +93,18 @@ package SplunkInvestigationStack {
              * through in-process — no HTTP, no server process
              * (connector.py:1-8). Owns the in-process `_sessions` cache
              * (heavy per-run objects) and mirrors lightweight run state
-             * (iteration, confidence, pause flag, hint) into Persistence's
+             * (iteration, confidence, pause flag, hint, repo_path) into Persistence's
              * `active_runs` table on every update so any process can
              * observe live progress. Also drives the standalone agent's
              * outer loop (run_standalone_agent).
              *
-             * start_investigation/submit_report each wrap their result-
-             * building in splunk/dispatcher.py's tool_called context
-             * manager, which fires an advisory post-hook (repo_path_nudge,
-             * confidence_nudge, followup_nudge) only when the result carries
-             * no "error" key — never blocking, only adding an optional key
-             * the calling agent may act on. Self-contained in-repo; no
-             * dependency on an external MCP-host hook. */
+             * start_investigation/submit_report add advisory nudges
+             * (repo_path_nudge, confidence_nudge, followup_nudge) from
+             * splunk/dispatcher.py's pure functions to success results only
+             * — never blocking, never on an "error" result. Also owns the
+             * one CLI (findings/agent/start/submit-report/...) and
+             * find_symbol_refs (whole-word grep over the run's repo_path,
+             * persisted on active_runs so a rehydrated session keeps it). */
         part foundation : Foundation;
         part core : DetectionCore;
         part store : Persistence;
@@ -115,21 +114,10 @@ package SplunkInvestigationStack {
         doc /* splunk/mcp_server.py. FastMCP server exposing 9 investigation
              * tools as thin wrappers over Orchestrator and Persistence:
              * investigate_start, submit_report, get_findings, pause, hint,
-             * query_examples, lsp_call_chain, check_alerts, ack_alert.
+             * query_examples, find_symbol_refs, check_alerts, ack_alert.
              * Owns no state of its own. */
         part foundation : Foundation;
         part orchestrator : Orchestrator;
-        part store : Persistence;
-    }
-
-    part def Runner {
-        doc /* splunk/runner.py. CLI entry point for the non-agent,
-             * non-MCP path (`python -m splunk`) — loads a file/live
-             * source, runs DetectionCore directly, persists via
-             * Persistence. */
-        part foundation : Foundation;
-        part orchestrator : Orchestrator;
-        part core : DetectionCore;
         part store : Persistence;
     }
 
@@ -173,7 +161,7 @@ package SplunkInvestigationStack {
 
     part def AgentLoop {
         doc /* standalone/agent.py. Optional standalone LangGraph ReAct agent
-             * (--investigate flag) — an alternative reasoning loop to the
+             * (`python -m splunk agent`) — an alternative reasoning loop to the
              * MCP/Copilot path. Receives a findings dict, never raw
              * events or a DataFrame (CLAUDE.md — "Agent lives in agent.py
              * only"). Depends on InvestigationAreaRegistry for domain
@@ -216,7 +204,6 @@ package SplunkInvestigationStack {
         part store : Persistence;
         part orchestrator : Orchestrator;
         part mcpServer : MCPServer;
-        part runner : Runner;
         part tui : TUI;
         part connectivity : LiveConnectivity;
         part areas : InvestigationAreaRegistry;

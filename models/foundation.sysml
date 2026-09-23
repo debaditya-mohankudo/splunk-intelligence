@@ -13,8 +13,8 @@ package Foundation {
          *      module reads from it; none redefines a default locally.
          *
          *   2. RunLogger writes one structured JSON-lines file per run_id
-         *      under logs/ — every entry point (connector.py, watcher.py,
-         *      runner.py) that starts a unit of work opens its own logger
+         *      under logs/ — every entry point (connector.py, watcher.py)
+         *      that starts a unit of work opens its own logger
          *      instance rather than sharing global logging state, so a
          *      run's audit trail is always self-contained and disposable. */
 

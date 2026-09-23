@@ -10,18 +10,17 @@ Splunk export (JSON/CSV)  ──or──  Splunk REST API
     └─> detectors.py      # rule-based: spikes, patterns, cert anomalies, correlations,
     │                     #   severity, host rankings, slow queries, numeric anomalies
     └─> connector.py      # facade: loading, detection, run state — no HTTP, no server
-    │                     #   process; MCP tools, the TUI, runner.py, and its own CLI
-    │                     #   all call into it directly
+    │                     #   process; MCP tools, the TUI, and its own CLI
+    │                     #   (`python -m splunk`) all call into it directly
     └─> mcp_server.py     # FastMCP: exposes investigation tools to Copilot / Claude
     └─> tui.py            # terminal UI: run history + live progress, reads splunk.db directly
-    └─> runner.py         # CLI orchestrator
     └─> reports/          # generated markdown reports
     └─> logs/             # per-run JSONL structured logs (audit trail — every
     │                     #   investigate/pause/hint/done action, not just the CLI pipeline)
-    └─> splunk.db         # SQLite: events, findings, reports, queries, active_runs, alerts per run_id
+    └─> splunk.db         # SQLite: events, reports, queries, active_runs, alerts per run_id
 
 standalone/               # top-level dir: processes that run outside the MCP/agent loop
-    └─> agent.py          # optional: standalone LangGraph ReAct loop (--investigate flag),
+    └─> agent.py          # optional: standalone LangGraph ReAct loop (`python -m splunk agent`),
     │                     #   via splunk/llm_backends.py — ollama / claude_cli / copilot_cli
     └─> watcher.py        # standalone process (python -m standalone.watcher) — polls Splunk on an
                           #   interval, runs detectors, writes hits to splunk.db's alerts table;
@@ -30,7 +29,7 @@ standalone/               # top-level dir: processes that run outside the MCP/ag
 
 The investigation loop is self-contained — `splunk__submit_report` returns `{status, findings, next}` and the agent loops on its own without external hooks.
 
-Copilot/Claude via MCP is the primary reasoning path — no Ollama or CLI subprocess required. For environments without either, `standalone/agent.py` provides an optional standalone LangGraph ReAct agent, enabled via `uv run python -m splunk --input <file> --investigate` (requires `uv sync --extra llm`). See [Standalone agent](#standalone-agent---investigate) below for backend options.
+Copilot/Claude via MCP is the primary reasoning path — no Ollama or CLI subprocess required. For environments without either, `standalone/agent.py` provides an optional standalone LangGraph ReAct agent, enabled via `uv run python -m splunk agent --source <file>` (requires `uv sync --extra llm`). See [Standalone agent](#standalone-agent-python--m-splunk-agent) below for backend options.
 
 ## Quick start
 
@@ -65,10 +64,13 @@ This opens a visible **Chromium** window via Playwright. Complete the SSO login 
 
 ```bash
 # From a local export file
-uv run python -m splunk --input results/cert_errors.json
+uv run python -m splunk findings --source results/cert_errors.json
 
 # Live SPL query
-uv run python -m splunk --live --spl "index=pki sourcetype=ocsp_error" --earliest -6h
+uv run python -m splunk findings --spl "index=pki sourcetype=ocsp_error" --earliest -6h
+
+# Findings JSON on stdout instead of a markdown report
+uv run python -m splunk findings --source results/cert_errors.json --json
 ```
 
 ## Via AI agent (MCP tools)
@@ -87,21 +89,21 @@ Then ask Copilot or Claude: *"Start a Splunk investigation on results/cert_error
 
 The agent calls `splunk__investigate_start`, reasons over findings, and loops via `splunk__submit_report` until confident. See [docs/investigation-loop.md](docs/investigation-loop.md) for the full loop protocol.
 
-The TUI reads `splunk.db` directly for run history and the rendered report, and polls the `active_runs` table for live iteration/confidence/event-count every ~2s — no HTTP involved. Because every `connector` function writes to `active_runs` regardless of which process calls it, the TUI shows live per-iteration progress for **both** MCP/Claude-driven investigations and the standalone `--investigate` agent path — previously (before this design), MCP-driven progress was invisible to any other process since it only lived in an in-memory dict inside whichever process was running it.
+The TUI reads `splunk.db` directly for run history and the rendered report, and polls the `active_runs` table for live iteration/confidence/event-count every ~2s — no HTTP involved. Because every `connector` function writes to `active_runs` regardless of which process calls it, the TUI shows live per-iteration progress for **both** MCP/Claude-driven investigations and the standalone `agent` path — previously (before this design), MCP-driven progress was invisible to any other process since it only lived in an in-memory dict inside whichever process was running it.
 
 ### No MCP client available? Use the connector CLI
 
 Same investigation engine, no MCP tool-calling required:
 
 ```bash
-uv run python -m splunk.connector start --source results/cert_errors.json
-uv run python -m splunk.connector submit-report --run-id <id> --report "..." --queries "-- tls\nindex=pki ..."
-uv run python -m splunk.connector get-findings --run-id <id>
-uv run python -m splunk.connector pause --run-id <id>
-uv run python -m splunk.connector hint --run-id <id> --text "focus on web-01 after 14:30 UTC"
+uv run python -m splunk start --source results/cert_errors.json
+uv run python -m splunk submit-report --run-id <id> --report "..." --queries "-- tls\nindex=pki ..."
+uv run python -m splunk get-findings --run-id <id>
+uv run python -m splunk pause --run-id <id>
+uv run python -m splunk hint --run-id <id> --text "focus on web-01 after 14:30 UTC"
 ```
 
-## Standalone agent (`--investigate`)
+## Standalone agent (`python -m splunk agent`)
 
 For environments without Copilot or Claude Code driving MCP tools directly, `standalone/agent.py`
 runs its own LangGraph ReAct loop over the same detector findings and produces the same kind of
@@ -110,7 +112,7 @@ markdown report. It's a fallback, not the primary path — prefer the MCP flow a
 ```bash
 uv sync --extra llm   # pulls in langgraph, langchain-core, langchain-ollama
 
-uv run python -m splunk --input results/cert_errors.json --investigate
+uv run python -m splunk agent --source results/cert_errors.json
 ```
 
 The chat backend driving the loop is selected via `SPLUNK_AGENT_BACKEND` (default `ollama`):
@@ -124,15 +126,15 @@ The chat backend driving the loop is selected via `SPLUNK_AGENT_BACKEND` (defaul
 ```bash
 # Ollama (default) — needs `ollama serve` running and the model pulled
 ollama pull qwen2.5:14b
-uv run python -m splunk --input results/cert_errors.json --investigate
+uv run python -m splunk agent --source results/cert_errors.json
 
 # Claude CLI — no separate server process, reuses your `claude` login
 SPLUNK_AGENT_BACKEND=claude_cli \
-  uv run python -m splunk --input results/cert_errors.json --investigate
+  uv run python -m splunk agent --source results/cert_errors.json
 
 # Copilot CLI
 SPLUNK_AGENT_BACKEND=copilot_cli \
-  uv run python -m splunk --input results/cert_errors.json --investigate
+  uv run python -m splunk agent --source results/cert_errors.json
 ```
 
 `claude_cli`/`copilot_cli` shell out to the CLI non-interactively (`claude -p` / `copilot -p`)
@@ -183,16 +185,15 @@ or SSO. See `local_splunk/README.md` for setup/teardown steps.
 | `splunk/config.py` | All tunables — thresholds, paths, auth |
 | `splunk/parsers.py` | `parse_splunk_json` / `parse_splunk_csv` → `pl.DataFrame` |
 | `splunk/detectors.py` | `detect_spikes`, `detect_cert_anomalies`, `detect_event_pairs`/`detect_event_pair_patterns` (entity-keyed A-precedes-B correlation, e.g. cert error → later handshake failure on the same host), `host_error_ranking`, `detect_slow_queries`, `detect_numeric_anomalies`, etc. |
-| `splunk/connector.py` | Facade: loading, run state, standalone agent loop, `python -m splunk.connector` CLI |
+| `splunk/connector.py` | Facade: loading, run state, standalone agent loop, the one CLI (`python -m splunk` = `python -m splunk.connector`) |
 | `splunk/mcp_server.py` | FastMCP server — 9 investigation tools (thin wrappers over connector.py) |
 | `splunk/tui.py` | Terminal UI — `python -m splunk.tui`, reads `splunk.db` directly |
-| `splunk/runner.py` | CLI entry point |
 | `splunk/client.py` | Splunk REST client (cookie-based, SSO-compatible) |
 | `splunk/auth.py` | Playwright SSO — opens Chromium, saves cookie |
-| `splunk/db.py` | SQLite store: events, findings, reports, queries, active_runs, alerts, per-sourcetype schema cache |
+| `splunk/db.py` | SQLite store: events, reports, queries, active_runs, alerts, per-sourcetype schema cache |
 | `splunk/logger.py` | Structured JSON-lines logging per run — audit trail for every connector action |
 | `standalone/watcher.py` | Standalone `python -m standalone.watcher` process — polls Splunk on an interval, runs detectors, writes hits to the `alerts` table (consumed via `splunk__check_alerts`/`splunk__ack_alert`) |
-| `standalone/agent.py` | Standalone LangGraph ReAct agent (`--investigate` flag) — see [Standalone agent](#standalone-agent---investigate) |
+| `standalone/agent.py` | Standalone LangGraph ReAct agent (`python -m splunk agent`) — see [Standalone agent](#standalone-agent-python--m-splunk-agent) |
 | `splunk/llm_backends.py` | Pluggable chat backend for `standalone/agent.py` — `ollama`, `claude_cli`, `copilot_cli` |
 | `splunk/investigation_areas.py` | Registry of investigation domains (prompt + SPL template) consumed by `standalone/agent.py`'s tools |
 
