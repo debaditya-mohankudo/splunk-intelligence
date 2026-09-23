@@ -41,6 +41,12 @@ tools, `submit_report` responses (`continue` / `done` / `paused`), done rules, r
 template, confidence rubric and sparse-data cap, and the follow-up query format. This skill
 adds only the Claude-specific steps below.
 
+**Map of the run:** `splunk-investigate-process-domain.json` (same directory) is this skill
+as a graph — every step and gate from invocation to finish, the MCP tool that covers each
+step, what it writes, the ontology term it reasons about, and a `doc_ref` into the prose.
+Gates marked `server_side` are decided inside `splunk__submit_report`; you read the returned
+`status`, you don't evaluate them. Walk it in edge order; read `doc_ref` for the judgment.
+
 The one line the server parses — put it in every report exactly like this:
 
 ```

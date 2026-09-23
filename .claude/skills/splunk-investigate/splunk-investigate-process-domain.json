@@ -1,0 +1,220 @@
+{
+  "meta": {
+    "note": "Process graph for the splunk-investigate skill's run sequence -- the ordered steps a run walks, which MCP tool (if any) covers each one, what gates a step, what each step writes, and which ontology term (ontology/splunk-investigation-domain.json) it reasons about. Deliberately NOT a replacement for docs/investigation-loop.md: the report template, confidence rubric, query format and reasoning guidance stay prose-only there, pointed to here via doc_ref. This file only carries what graphs cleanly -- order, gating, loop-back, tool bindings, write targets. Where this graph and splunk/connector.py disagree, the code wins and this file is the bug.",
+    "repo": "splunk-intelligence",
+    "created_at": "2026-09-23",
+    "consumed_by": ".claude/skills/splunk-investigate/SKILL.md -- walk nodes in edge order, honor gated_by, call mcp_tool where set, read doc_ref for the judgment part of each step. Gates marked `server_side: true` are evaluated inside splunk__submit_report (connector.submit_report / connector._step); the agent does not decide them, it reads the returned `status`.",
+    "companion": "ontology/splunk-investigation-domain.json holds the vocabulary; refers_to_term points into it rather than restating a definition here.",
+    "node_types": {
+      "step": "A unit of work performed by the agent (or by the server inside one tool call).",
+      "gate": "A boolean check that decides which edge a run follows -- not itself a unit of work.",
+      "terminal": "A node where the run ends."
+    },
+    "gate_polarity": {
+      "_note": "Every gate carries `polarity`; a consumer must fail on a gate without it rather than guess. What a TRUE condition means:",
+      "enabling": "the gated step runs only when the condition holds.",
+      "blocking": "the run leaves the normal path when the condition holds (follows the gate's `on_true` edge).",
+      "done_rule": "a submit_report done rule: when true the server returns status 'done' and the run goes to `on_true`. Evaluated in `order`; the first true one wins."
+    },
+    "edge_types": {
+      "precedes": "Run order -- the target only makes sense once the source has completed (or been skipped).",
+      "gated_by": "The target does not run unless the source gate's condition holds (for blocking/done_rule gates: unless it does NOT hold).",
+      "on_true": "Where the run goes when a blocking or done_rule gate's condition holds.",
+      "loops_to": "Back-edge: the run returns to an earlier step for another iteration.",
+      "writes": "The splunk.db table this step writes, see the node's `writes` field."
+    }
+  },
+
+  "nodes": {
+    "gate_input_given": {
+      "type": "gate",
+      "polarity": "enabling",
+      "label": "Input given",
+      "condition": "The invocation names a file path (source) or a live SPL query (spl).",
+      "effect": "If false, ask the user for one; splunk__investigate_start returns an error without it.",
+      "doc_ref": ".claude/skills/splunk-investigate/SKILL.md#invocation"
+    },
+    "gate_live_spl": {
+      "type": "gate",
+      "polarity": "enabling",
+      "label": "Live SPL input",
+      "condition": "The input is an SPL query, not a file path.",
+      "effect": "Only live SPL runs the preflight steps; file input goes straight to step_start.",
+      "doc_ref": ".claude/skills/splunk-investigate/SKILL.md#step-0--live-spl-preflight-skip-for-file-input"
+    },
+    "gate_auth_cached": {
+      "type": "gate",
+      "polarity": "enabling",
+      "label": "Cached SSO cookie",
+      "condition": "$SPLUNK_AUTH_PATH (default ~/.splunk/auth.json) exists.",
+      "effect": "If false, tell the user to run `uv run python -m splunk.auth` and stop. Presence does not prove the session is still valid; client.py re-auths on 401.",
+      "doc_ref": ".claude/skills/splunk-investigate/SKILL.md#step-0--live-spl-preflight-skip-for-file-input"
+    },
+    "step_confirm_target": {
+      "type": "step",
+      "label": "Confirm SPLUNK_URL and show SPLUNK_KNOWN_INDEXES",
+      "mcp_tool": null,
+      "manual_only": "Read .env / environment and confirm with the user before any live query.",
+      "doc_ref": ".claude/skills/splunk-investigate/SKILL.md#step-0--live-spl-preflight-skip-for-file-input"
+    },
+    "step_start": {
+      "type": "step",
+      "label": "Load events, run detectors",
+      "mcp_tool": "splunk__investigate_start(source | spl, earliest, latest, repo_path)",
+      "cli_fallback": "uv run python -m splunk.connector start --source <file>",
+      "returns": ["run_id", "findings", "event_count", "ui_url"],
+      "writes": ["active_runs"],
+      "refers_to_term": ["Run", "Detector", "Finding"],
+      "doc_ref": "docs/investigation-loop.md#loop"
+    },
+    "step_reason": {
+      "type": "step",
+      "label": "Reason over findings -> report + 1-3 follow-up queries",
+      "mcp_tool": null,
+      "optional_tools": ["splunk__query_examples", "splunk__find_symbol_refs", "splunk__get_findings"],
+      "manual_only": "The agent's judgment: one falsifiable hypothesis, a **Confidence:** line, and follow-up SPL labelled `-- <area>` using only values present in the findings.",
+      "refers_to_term": ["Hypothesis", "Evidence", "ConfidenceLevel", "FollowupQuery", "InvestigationArea", "Report"],
+      "doc_ref": "docs/investigation-loop.md#report"
+    },
+    "step_submit": {
+      "type": "step",
+      "label": "Submit report and queries",
+      "mcp_tool": "splunk__submit_report(run_id, report, queries)",
+      "cli_fallback": "uv run python -m splunk.connector submit-report --run-id <id> --report ... --queries ...",
+      "returns": ["status"],
+      "doc_ref": "docs/investigation-loop.md#submit_report-responses"
+    },
+    "gate_paused": {
+      "type": "gate",
+      "polarity": "blocking",
+      "server_side": true,
+      "label": "Analyst paused the run",
+      "condition": "active_runs.pause_requested is set (splunk__pause or the TUI).",
+      "effect": "status 'paused': nothing stored, iteration unchanged. Wait, then resubmit the same report and queries.",
+      "evidence": "splunk/connector.py:submit_report",
+      "doc_ref": "docs/investigation-loop.md#submit_report-responses"
+    },
+    "step_wait_resume": {
+      "type": "step",
+      "label": "Wait for the analyst to resume",
+      "mcp_tool": null,
+      "manual_only": "Do not advance; resubmit the unchanged report and queries once resumed.",
+      "doc_ref": "docs/investigation-loop.md#submit_report-responses"
+    },
+    "step_record": {
+      "type": "step",
+      "server_side": true,
+      "label": "Store report, advance iteration, parse confidence",
+      "mcp_tool": "splunk__submit_report (same call as step_submit)",
+      "writes": ["reports", "active_runs"],
+      "note": "event_count < SPARSE_EVENT_THRESHOLD (50) caps a stated High to Medium; a missing confidence line reads as Medium.",
+      "refers_to_term": ["Report", "ConfidenceLevel"],
+      "evidence": "splunk/investigator.py:_parse_confidence",
+      "doc_ref": "docs/investigation-loop.md#confidence-rubric"
+    },
+    "gate_high_confidence": {
+      "type": "gate",
+      "polarity": "done_rule",
+      "server_side": true,
+      "order": 1,
+      "label": "Confidence High",
+      "condition": "Parsed confidence == 'High' after the sparse-data cap.",
+      "evidence": "splunk/connector.py:_step",
+      "doc_ref": "docs/investigation-loop.md#done-rules"
+    },
+    "gate_no_queries": {
+      "type": "gate",
+      "polarity": "done_rule",
+      "server_side": true,
+      "order": 2,
+      "label": "No follow-up queries",
+      "condition": "queries is empty.",
+      "evidence": "splunk/connector.py:_step",
+      "doc_ref": "docs/investigation-loop.md#done-rules"
+    },
+    "gate_max_iter": {
+      "type": "gate",
+      "polarity": "done_rule",
+      "server_side": true,
+      "order": 3,
+      "label": "Iteration cap reached",
+      "condition": "iteration >= SPLUNK_INVESTIGATOR_MAX_ITER (default 3).",
+      "evidence": "splunk/connector.py:_step",
+      "doc_ref": "docs/investigation-loop.md#done-rules"
+    },
+    "step_execute": {
+      "type": "step",
+      "server_side": true,
+      "label": "Run follow-up SPL",
+      "mcp_tool": "splunk__submit_report (same call as step_submit)",
+      "writes": ["investigation_queries"],
+      "note": "Stores each query with its area label and result_rows.",
+      "refers_to_term": ["FollowupQuery", "InvestigationArea"],
+      "evidence": "splunk/investigator.py:_execute_queries",
+      "doc_ref": "docs/investigation-loop.md#follow-up-queries"
+    },
+    "gate_no_new_events": {
+      "type": "gate",
+      "polarity": "done_rule",
+      "server_side": true,
+      "order": 4,
+      "label": "Follow-ups returned nothing",
+      "condition": "The executed queries returned zero events.",
+      "evidence": "splunk/connector.py:_step",
+      "doc_ref": "docs/investigation-loop.md#done-rules"
+    },
+    "step_continue": {
+      "type": "step",
+      "server_side": true,
+      "label": "Return new findings (status 'continue')",
+      "mcp_tool": "splunk__submit_report (same call as step_submit)",
+      "returns": ["iteration", "confidence", "event_count", "findings", "next"],
+      "note": "A queued splunk__hint appears as findings.analyst_hint.",
+      "refers_to_term": ["Finding", "AnalystHint"],
+      "doc_ref": "docs/investigation-loop.md#submit_report-responses"
+    },
+    "step_finish": {
+      "type": "step",
+      "label": "Present final summary",
+      "mcp_tool": null,
+      "manual_only": "Summarise the final report, mention any *_nudge keys, point to `uv run python -m splunk.tui` for the run.",
+      "refers_to_term": ["RootCause", "Nudge"],
+      "doc_ref": ".claude/skills/splunk-investigate/SKILL.md#step-2--finish"
+    },
+    "end_needs_auth": {
+      "type": "terminal",
+      "label": "Stopped: user must log in first"
+    },
+    "end_done": {
+      "type": "terminal",
+      "label": "Run complete"
+    }
+  },
+
+  "edges": [
+    {"from": "gate_input_given", "type": "gated_by", "to": "gate_live_spl"},
+    {"from": "gate_live_spl", "type": "gated_by", "to": "gate_auth_cached"},
+    {"from": "gate_auth_cached", "type": "gated_by", "to": "step_confirm_target"},
+    {"from": "gate_auth_cached", "type": "on_true", "to": "end_needs_auth", "_note": "taken when the cookie is MISSING (enabling gate false)"},
+    {"from": "step_confirm_target", "type": "precedes", "to": "step_start"},
+    {"from": "gate_live_spl", "type": "precedes", "to": "step_start", "_note": "file input skips the preflight"},
+    {"from": "step_start", "type": "precedes", "to": "step_reason"},
+    {"from": "step_reason", "type": "precedes", "to": "step_submit"},
+    {"from": "step_submit", "type": "precedes", "to": "gate_paused"},
+    {"from": "gate_paused", "type": "on_true", "to": "step_wait_resume"},
+    {"from": "step_wait_resume", "type": "loops_to", "to": "step_submit"},
+    {"from": "gate_paused", "type": "precedes", "to": "step_record"},
+    {"from": "step_record", "type": "precedes", "to": "gate_high_confidence"},
+    {"from": "gate_high_confidence", "type": "on_true", "to": "step_finish"},
+    {"from": "gate_high_confidence", "type": "precedes", "to": "gate_no_queries"},
+    {"from": "gate_no_queries", "type": "on_true", "to": "step_finish"},
+    {"from": "gate_no_queries", "type": "precedes", "to": "gate_max_iter"},
+    {"from": "gate_max_iter", "type": "on_true", "to": "step_finish"},
+    {"from": "gate_max_iter", "type": "precedes", "to": "step_execute"},
+    {"from": "step_execute", "type": "precedes", "to": "gate_no_new_events"},
+    {"from": "gate_no_new_events", "type": "on_true", "to": "step_finish"},
+    {"from": "gate_no_new_events", "type": "precedes", "to": "step_continue"},
+    {"from": "step_continue", "type": "loops_to", "to": "step_reason"},
+    {"from": "step_finish", "type": "precedes", "to": "end_done"}
+  ]
+}
